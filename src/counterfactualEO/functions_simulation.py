@@ -1,3 +1,22 @@
+"""
+functions_simulations.py
+
+This module provides tools for simulating data and evaluating counterfactually
+fair predictors in experimental settings. It includes functions for:
+
+- Generating synthetic data before and after deployment of a risk model,
+  including true and noisy nuisance parameters (propensity scores and outcome models)
+- Computing oracle and noisy estimates of linear program (LP) coefficients
+  for fairness-constrained optimization
+- Evaluating the performance and fairness of derived predictors
+- Studying how nuisance estimation error and sample size affect fairness-constrained
+  decision rules (theta) and their evaluation
+
+The module supports two core experimental tasks:
+1. Estimating a counterfactually fair predictor (theta-hat) under noise
+2. Evaluating a fixed predictor (theta) across multiple sample sizes
+"""
+
 import numpy as np
 import pandas as pd
 from scipy.special import expit
