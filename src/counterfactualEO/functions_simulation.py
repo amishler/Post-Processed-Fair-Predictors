@@ -99,6 +99,7 @@ def generate_data_post(n, prob_A, beta_X, beta_D, beta_Y0, beta_Y1, model_R,
     A = np.random.binomial(1, prob_A, size=(n, 1))
     X = np.random.normal(beta_X * A, size=(n, 4))
     AX = np.concatenate([A, X], axis=1)
+    AX = pd.DataFrame(AX, columns=['A', 'X1', 'X2', 'X3', 'X4'])  # For clarity in the output
 
     R = model_R.predict(AX).reshape((n, 1))
     AXR = np.concatenate([A, X, R], axis=1)
