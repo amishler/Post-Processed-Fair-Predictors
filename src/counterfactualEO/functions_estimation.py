@@ -219,8 +219,8 @@ def fairness_coefs(data, A='A', R='R', outcome='phihat'):
         out: a tuple containing the coefficients for the constraints related to
             the counterfactual false positive and false negative rates.
     """
-    false_pos = data.groupby(A).apply(est_cFPR_overall, R, outcome).values.clip(0, 1)
-    false_neg = data.groupby(A).apply(est_cFNR_overall, R, outcome).values.clip(0, 1)
+    false_pos = data.groupby(A).apply(est_cFPR_overall, R, outcome, include_groups=False).values.clip(0, 1)
+    false_neg = data.groupby(A).apply(est_cFNR_overall, R, outcome, include_groups=False).values.clip(0, 1)
     coefs_pos = np.array(
         [1 - false_pos[0], false_pos[0], false_pos[1] - 1, -false_pos[1]])
     coefs_neg = np.array(
