@@ -6,6 +6,7 @@ This includes estimation of risk and fairness metrics with influence
 function-based asymptotically valid confidence intervals.
 """
 
+from joblib import Parallel, delayed
 import numpy as np
 import pandas as pd
 import scipy
@@ -258,50 +259,49 @@ def metrics(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci_scale='logi
     return out
 
 
-def _metrics_to_df(res):
+def _eval_one_theta(n_val, mc_iter, theta_row, data_val, ci):
     """
-    Convert 3D array of simulation results into a long-format DataFrame.
+    Evaluate a single theta and return its metrics as a DataFrame row.
+    """
+    df = metrics(theta_row, data_val, A='A', R='R', outcome='mu0', ci=ci)
+    df.insert(0, 'mc_iter', mc_iter)
+    df.insert(0, 'n', n_val)
+    return df
+
+
+def metrics_to_df(res, n_arr, setting, data_val, ci=0.95, n_jobs=-1):
+    """
+    Fully parallelized version: evaluates metrics for each theta separately.
 
     Args:
-        res (np.ndarray): Array of shape (mc_reps, num_metrics, 5) for one n.
+        res (list): List of sim_theta outputs (each with 'theta_arr').
+        n_arr (list): Corresponding sample sizes.
+        setting (str): Experiment label to tag results.
+        data_val (pd.DataFrame): Validation data for evaluation.
+        ci (float): Confidence interval level.
+        n_jobs (int): Number of parallel jobs (-1 = all cores).
 
     Returns:
-        pd.DataFrame: Flattened result with 'mc_iter' and metric columns.
+        pd.DataFrame: Combined long-format metrics with confidence intervals.
     """
-    out = [pd.DataFrame(res[i, :, :]) for i in range(res.shape[0])]
-    out = pd.concat(out, keys=list(range(len(out))), names=['mc_iter'])
-    out = out.reset_index().drop(columns='level_1')
-    out.columns = ['mc_iter', 'metric', 'value', 'ci_lower', 'ci_upper']
+    jobs = []
+    for rr, n_val in zip(res, n_arr):
+        for mc_iter, theta_row in enumerate(rr['theta_arr']):
+            jobs.append((n_val, mc_iter, theta_row))
 
-    return out
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(_eval_one_theta)(n_val, mc_iter, theta_row, data_val, ci)
+        for n_val, mc_iter, theta_row in jobs
+    )
 
+    df = pd.concat(results, ignore_index=True)
+    df['setting'] = setting
+    df['value'] = pd.to_numeric(df['value'])
 
-def metrics_to_df(res, n_arr, setting, data_val, ci=0.95):
-    """
-    Convert simulation output across sample sizes into one plottable DataFrame.
-
-    Args:
-        res (list): List of results from multiple `sim_theta` runs.
-        n_arr (list): Sample sizes corresponding to each result.
-        setting (str): Label for experimental setting.
-        data_val (pd.DataFrame): Data used to re-evaluate each theta.
-        ci (float): Confidence level.
-
-    Returns:
-        pd.DataFrame: Long-format table with metrics, CIs, and metadata.
-    """
-    out = [np.apply_along_axis(metrics, 1, rr['theta_arr'], data=data_val,
-                               outcome='mu0', ci=ci) for rr in res]
-    out = pd.concat([_metrics_to_df(arr) for arr in out], keys=n_arr)
-    out = out.reset_index().drop(columns='level_1')
-    out.columns = ['n', 'mc_iter', 'metric', 'value', 'ci_lower', 'ci_upper']
-    out['setting'] = setting
-    out['value'] = pd.to_numeric(out['value'])
-
-    return out
+    return df
 
 
-def coverage(metrics_est, metrics_true, simplify=True):
+def coverage(metrics_est, metrics_true, simplify=False):
     """
     Calculate CI coverage rate based on true metric values.
 
@@ -309,19 +309,33 @@ def coverage(metrics_est, metrics_true, simplify=True):
         metrics_est (pd.DataFrame): DataFrame with estimated CIs.
         metrics_true (pd.DataFrame): DataFrame with true metric values.
         simplify (bool): If True, return group-averaged coverage by metric and n.
+                        Requires 'n' to be a column in `metrics_est`.
 
     Returns:
         pd.DataFrame: Either row-wise coverage or grouped summary.
+
+    Raises:
+        ValueError: If simplify=True but 'n' is not a column in metrics_est.
     """
-    true_dict = metrics_true[['metric', 'value']].set_index('metric').T.to_dict(
-        'list')
-    true_vals = metrics_est['metric'].replace(true_dict)
-    cov = (metrics_est['ci_lower'] <= true_vals) & (
-                true_vals <= metrics_est['ci_upper'])
+    # Convert {metric: [value]} → {metric: value}
+    true_dict = (
+        metrics_true[['metric', 'value']]
+        .set_index('metric')['value']
+        .to_dict()
+    )
+
+    # Map metric → scalar value
+    true_vals = metrics_est['metric'].map(true_dict)
+
+    # Compute coverage
+    cov = (metrics_est['ci_lower'] <= true_vals) & (true_vals <= metrics_est['ci_upper'])
+
+    # Attach coverage column
     out = metrics_est.assign(coverage=cov)
+
     if simplify:
-        out = out.groupby(['metric', 'n'])[['coverage']].mean()
-        out = out.unstack().reset_index().rename(columns = {'': 'metric'})
-        out.columns = out.columns.droplevel(0)
+        if 'n' not in metrics_est.columns:
+            raise ValueError("Cannot simplify coverage summary: column 'n' not found in `metrics_est`.")
+        out = out.groupby(['metric', 'n'])[['coverage']].mean().reset_index()
 
     return out
