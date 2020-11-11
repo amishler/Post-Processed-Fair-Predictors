@@ -38,16 +38,26 @@ def test_est_cFNR_group(real_data, ci_scale):
     pd.testing.assert_frame_equal(result, expected)
 
 
-def test_metrics_structure(real_test_data):
-    df, testdict = real_test_data
+def test_metrics_structure(real_data):
+    df, testdict = real_data
     theta = testdict['theta']
     result = metrics(theta, df, outcome='phihat', ci=0.95)
     assert isinstance(result, pd.DataFrame)
     assert {'metric', 'value', 'ci_lower', 'ci_upper'}.issubset(result.columns)
 
 
-def test_coverage_structure(real_test_data):
-    df, testdict = real_test_data
+def test_coverage_structure(real_data):
+    df, testdict = real_data
     metrics_est = metrics(testdict['theta'], df, outcome='phihat', ci=0.95)
-    cov_df = coverage(metrics_est, testdict['risk_df'], simplify=True)
+    cov_df = coverage(metrics_est, testdict['risk_df'], simplify=False)
     assert isinstance(cov_df, pd.DataFrame)
+
+
+def test_coverage_with_simplify(mock_metrics_est_with_n, mock_metrics_true):
+    """
+    Ensure coverage runs and returns expected output when simplify=True and 'n' is present.
+    """
+    result = coverage(mock_metrics_est_with_n, mock_metrics_true, simplify=True)
+    assert isinstance(result, pd.DataFrame)
+    assert list(result.columns) == ['metric', 'n', 'coverage']
+    assert result.shape[0] > 0

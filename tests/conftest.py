@@ -67,3 +67,22 @@ def mock_true_coefs():
         "pos": np.array([0.3, 0.2, -0.2, -0.1]),
         "neg": np.array([-0.1, -0.2, 0.2, 0.1]),
     }
+
+
+@pytest.fixture
+def mock_metrics_true():
+    return pd.DataFrame({
+        'metric': ['risk', 'risk_change'],
+        'value': [0.2, 0.1]
+    })
+
+
+@pytest.fixture
+def mock_metrics_est_with_n():
+    return pd.DataFrame({
+        'n': [50, 50],
+        'metric': ['risk', 'risk_change'],
+        'value': [0.21, 0.11],
+        'ci_lower': [0.19, 0.09],
+        'ci_upper': [0.23, 0.13]
+    })
