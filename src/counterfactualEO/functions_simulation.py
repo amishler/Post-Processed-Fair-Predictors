@@ -16,7 +16,7 @@ The module supports two core experimental tasks:
 1. Estimating a counterfactually fair predictor (theta-hat) under noise
 2. Evaluating a fixed predictor (theta) across multiple sample sizes
 """
-
+from joblib import Parallel, delayed
 import numpy as np
 import pandas as pd
 from scipy.special import expit
@@ -436,7 +436,7 @@ def add_noise_expit(n_arr, mc_reps, data_params, obj_true, pos_true, neg_true,
 
 
 def sim_theta(n, mc_reps, noise_coef, data_params, epsilon_pos, epsilon_neg,
-              A='A', R='R', outcome='phihat', verbose=False):
+              A='A', R='R', outcome='phihat', verbose=False, n_jobs=-1):
     """
     Simulate sampling variability in theta-hat under noisy nuisance parameters.
 
@@ -453,96 +453,39 @@ def sim_theta(n, mc_reps, noise_coef, data_params, epsilon_pos, epsilon_neg,
         A (str): Sensitive attribute column name.
         R (str): Risk score column name.
         outcome (str): Outcome used in optimization (e.g. 'phihat' or 'muhat0').
-            phihat yields doubly robust estimators for the linear program, while
-            muhat0 yields plugin estimators.
-        trunc_pi (float): Maximum value for pi.
         verbose (bool): Whether to print progress.
+        n_jobs (int): Number of parallel jobs (default: -1 for all available cores).
 
     Returns:
         dict: Dictionary with sample size and theta estimates across repetitions.
     """
-    print('Simulating theta-hat for sample size {}'.format(n))
-    theta_arr = np.zeros((mc_reps, 4))
+    print(f'Simulating theta-hat for sample size {n} with {mc_reps} repetitions...')
 
-    for i in range(mc_reps):
+    def single_simulation(i):
         if verbose and (i % 10 == 0):
-            print("...Round {}".format(i))
-
-        ## Generate data, compute and solve the LP
+            print(f"...Round {i}")
         data_train = generate_data_post_noisy(n, noise_coef, **data_params)
         obj = risk_coefs(data_train, A=A, R=R, outcome=outcome)
-        fair_pos, fair_neg = fairness_coefs(data_train, A=A, R=R,
-                                            outcome=outcome)
+        fair_pos, fair_neg = fairness_coefs(data_train, A=A, R=R, outcome=outcome)
         theta = optimize(obj, fair_pos, fair_neg, epsilon_pos, epsilon_neg)
-        theta_arr[i, :] = theta
+        return theta
 
-    out = {'n': n, 'theta_arr': theta_arr}
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(single_simulation)(i) for i in range(mc_reps)
+    )
 
-    return out
+    theta_arr = np.vstack(results)
+    return {'n': n, 'theta_arr': theta_arr}
 
 
-def _sim_task2(theta, noise_coef, n, mc_reps, data_params, outcome='phihat',
-               ci_scale='logit', verbose=False):
+def sim_task2(theta, noise_coef, n_arr, mc_reps, data_params,
+              outcome='phihat', ci_scale='logit', verbose=False, n_jobs=-1):
     """
-    Run a single experiment evaluating a fixed predictor under sampling variability.
+    Parallel simulation of evaluating a fixed predictor under sampling variability.
 
-    This function simulates the evaluation of a fixed predictor indexed by 
-    `theta` by generating `mc_reps` datasets of size `n` using the provided data 
-    generation process. It adds noise to the nuisance parameters and computes 
-    fairness and risk metrics for each repetition, returning metric estimates 
-    with confidence intervals.
-
-    `Task 2` refers to the task of estimating counterfactual fairness and
-    accuracy values for a fixed predictor, whereas `Task 1` refers to the task
-    of estimating a counterfactually fair predictor.
-
-    Args:
-        theta (np.ndarray): Fixed predictor rule to evaluate (4-vector).
-        noise_coef (float): Magnitude of noise added to nuisance parameters (phihat).
-        n (int): Sample size per simulation repetition.
-        mc_reps (int): Number of Monte Carlo repetitions.
-        data_params (dict): Parameters used to generate the synthetic dataset.
-        outcome (str): Column name for outcome to use ('phihat' or 'muhat0').
-        trunc_pi (float): Upper bound for clipping estimated propensity scores.
-        ci_scale (str): Scale for confidence intervals ('logit' or 'expit').
-        verbose (bool): Whether to print progress updates.
-
-    Returns:
-        pd.DataFrame: DataFrame containing one row per metric per repetition, 
-            with columns: ['mc_iter', 'metric', 'value', 'ci_lower', 'ci_upper'].
-    """
-    print('Estimating metrics for sample size {}: {} reps'.format(n, mc_reps))
-
-    res = [None] * mc_reps
-
-    for i in range(mc_reps):
-        if verbose and (i % 10 == 0):
-            print("...Round {}".format(i))
-
-        ## Generate data, estimate metrics
-        data_val = generate_data_post_noisy(n, noise_coef, **data_params)
-        res[i] = metrics(theta, data_val, outcome=outcome, ci_scale=ci_scale)
-
-    out = pd.concat(res, keys=list(range(mc_reps)))
-    out = out.reset_index().drop(columns='level_1')
-    out.columns = ['mc_iter', 'metric', 'value', 'ci_lower', 'ci_upper']
-
-    return out
-
-
-def sim_task2(theta, noise_coef, n_arr, mc_reps, data_params, outcome='phihat', 
-              ci_scale='logit', verbose=False):
-    """
-    Evaluate a fixed predictor across multiple sample sizes under repeated sampling.
-
-    This is a wrapper around `_sim_task2` that runs it for each sample size in 
-    `n_arr`, returning a combined DataFrame with all results. It is used to 
-    study how estimation accuracy varies with dataset size for a fixed decision 
-    rule.
-
-    `Task 2` refers to the task of estimating counterfactual fairness and
-    accuracy values for a fixed predictor, whereas `Task 1` refers to the task
-    of estimating a counterfactually fair predictor.
+    For each sample size in `n_arr`, this function runs `mc_reps` Monte Carlo
+    evaluations, where each one generates a new dataset, adds noise to the
+    nuisance estimates, and computes evaluation metrics for a fixed predictor.
 
     Args:
         theta (np.ndarray): Fixed decision vector (e.g., from an LP solution).
@@ -550,23 +493,31 @@ def sim_task2(theta, noise_coef, n_arr, mc_reps, data_params, outcome='phihat',
         n_arr (List[int]): List of sample sizes to evaluate.
         mc_reps (int): Number of Monte Carlo repetitions per sample size.
         data_params (dict): Parameters for generating synthetic data.
-        trunc_pi (float): Truncation threshold for propensity scores.
         outcome (str): Outcome column used for evaluation ('phihat' or 'muhat0').
         ci_scale (str): Confidence interval scale ('logit' or 'expit').
         verbose (bool): Whether to display progress during simulation.
+        n_jobs (int): Number of parallel jobs to run. Default (-1) uses all cores.
 
     Returns:
-        pd.DataFrame: Combined long-format metric estimates across all sample 
-            sizes, with columns: ['n', 'mc_iter', 'metric', 'value', 'ci_lower', 'ci_upper'].
+        pd.DataFrame: Long-format metric estimates with columns:
+                      ['n', 'mc_iter', 'metric', 'value', 'ci_lower', 'ci_upper']
     """
-    metrics_list = [_sim_task2(theta, noise_coef, n, mc_reps,
-                               data_params, outcome=outcome,
-                               ci_scale=ci_scale, verbose=verbose) for n in n_arr]
-    metrics_est = pd.concat(metrics_list, keys=n_arr)
-    metrics_est = metrics_est.reset_index().drop(columns='level_1')
-    metrics_est.columns = ['n', 'mc_iter', 'metric', 'value', 'ci_lower', 'ci_upper']
+    def simulate_one(n, i):
+        if verbose and (i % 10 == 0):
+            print(f"[n={n}] Simulating run {i}")
+        data_val = generate_data_post_noisy(n, noise_coef, **data_params)
+        result = metrics(theta, data_val, outcome=outcome, ci_scale=ci_scale)
+        result.insert(0, 'mc_iter', i)
+        result.insert(0, 'n', n)
+        return result
 
-    return metrics_est
+    tasks = [(n, i) for n in n_arr for i in range(mc_reps)]
+
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(simulate_one)(n, i) for n, i in tasks
+    )
+
+    return pd.concat(results).reset_index(drop=True)
 
 
 def simulate_true(n, data_params, epsilon_pos, epsilon_neg):
@@ -613,25 +564,3 @@ def simulate_true(n, data_params, epsilon_pos, epsilon_neg):
         'fairness_coefs_neg': fair_neg,
         'metrics': evals
     }
-
-# def simulate_true(n, data_params):
-#     """Get the 'true' best fair predictor, given access to true values of the
-#     nuisance parameters."""
-#     ## Generate data
-#     data_opt = generate_data_post(n, **data_params)
-
-#     ## Get empirical coefficients for loss and fairness constraints
-#     obj = risk_coefs(test, 'A', 'R', 'mu0')
-#     fair_pos, fair_neg = fairness_coefs(test, 'A', 'R', 'Y0')
-
-#     ## Get best derived predictor
-#     theta = optimize(loss_true, coefs_pos, coefs_neg, epsilon_pos, epsilon_neg)
-
-#     ## Get metrics of best derived predictor
-#     data_val = generate_data_post(n, **data_params)
-#     metrics = metrics(theta, data_val, 'A', 'R', 'Y0')
-#     out = {'theta': theta, 'risk_coefs': obj,
-#            'fairness_coefs_pos': fair_pos, 'fairness_coefs_neg': fair_neg,
-#            'metrics': metrics}
-
-#     return out

@@ -11,7 +11,6 @@ from counterfactualEO.functions_simulation import (
     add_noise_logit,
     add_noise_expit,
     sim_task2,
-    _sim_task2,
     sim_theta,
     simulate_true
 )
@@ -112,9 +111,3 @@ def test_sim_task2_format(mock_data_params, mock_theta):
     out = sim_task2(mock_theta, noise_coef=0.1, n_arr=[50], mc_reps=3, data_params=mock_data_params)
     assert isinstance(out, pd.DataFrame)
     assert set(["n", "mc_iter", "metric", "value", "ci_lower", "ci_upper"]).issubset(out.columns)
-
-
-def test__sim_task2_format(mock_data_params, mock_theta):
-    out = _sim_task2(mock_theta, noise_coef=0.1, n=50, mc_reps=3, data_params=mock_data_params)
-    assert isinstance(out, pd.DataFrame)
-    assert set(["mc_iter", "metric", "value", "ci_lower", "ci_upper"]).issubset(out.columns)
