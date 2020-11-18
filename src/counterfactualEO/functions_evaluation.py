@@ -12,6 +12,8 @@ import pandas as pd
 import scipy
 from scipy.special import expit, logit
 
+from tqdm import tqdm
+
 from counterfactualEO.functions_estimation import fairness_coefs
 
 
@@ -291,7 +293,7 @@ def metrics_to_df(res, n_arr, setting, data_val, ci=0.95, n_jobs=-1):
 
     results = Parallel(n_jobs=n_jobs)(
         delayed(_eval_one_theta)(n_val, mc_iter, theta_row, data_val, ci)
-        for n_val, mc_iter, theta_row in jobs
+        for n_val, mc_iter, theta_row in tqdm(jobs, desc="Evaluating θ metrics")
     )
 
     df = pd.concat(results, ignore_index=True)
