@@ -475,7 +475,8 @@ def sim_theta(n, mc_reps, noise_coef, data_params, epsilon_pos, epsilon_neg,
     )
 
     theta_arr = np.vstack(results)
-    return {'n': n, 'theta_arr': theta_arr}
+    return {'n': n, 'theta_arr': theta_arr, 'epsilon_pos': epsilon_pos,
+            'epsilon_neg': epsilon_neg}
 
 
 def sim_task2(theta, noise_coef, n_arr, mc_reps, data_params,
@@ -564,3 +565,39 @@ def simulate_true(n, data_params, epsilon_pos, epsilon_neg):
         'fairness_coefs_neg': fair_neg,
         'metrics': evals
     }
+
+
+def add_optimal_values(metrics_df, optimal_values_df, value_col='value', new_col='optimal_value'):
+    """
+    Merge metrics for a given theta-hat with corresponding metrics for the optimal fair predictor.
+
+    Args:
+        metrics_df (pd.DataFrame): Long-format DataFrame with simulation results.
+            Must include a 'metric' column.
+        optimal_values_df (pd.DataFrame): DataFrame containing metrics for the
+            optimal fair predictor, containing a 'metric' column and a column 
+            (default 'value') to merge.
+        value_col (str): Name of the column in `optimal_values_df` containing the
+            values to be added to `metrics_df`.
+        new_col (str): Name of the column to be added to `metrics_df` after the merge.
+
+    Returns:
+        pd.DataFrame: `metrics_df` with a new column `new_col` representing true values.
+
+    Raises:
+        ValueError: If required columns are missing.
+    """
+    required_cols = {'metric', value_col}
+    if not required_cols.issubset(optimal_values_df.columns):
+        raise ValueError(f"`optimal_values_df` must contain columns: {required_cols}")
+
+    if 'metric' not in metrics_df.columns:
+        raise ValueError("`metrics_df` must contain a 'metric' column for merging.")
+
+    merged = metrics_df.merge(
+        optimal_values_df[['metric', value_col]].rename(columns={value_col: new_col}),
+        on='metric',
+        how='left'
+    )
+
+    return merged
