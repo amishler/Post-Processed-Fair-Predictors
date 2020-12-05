@@ -261,13 +261,15 @@ def metrics(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci_scale='logi
     return out
 
 
-def _eval_one_theta(n_val, mc_iter, theta_row, data_val, ci):
+def _eval_one_theta(n_val, mc_iter, theta_row, epsilon_pos, epsilon_neg, data_val, ci):
     """
     Evaluate a single theta and return its metrics as a DataFrame row.
     """
     df = metrics(theta_row, data_val, A='A', R='R', outcome='mu0', ci=ci)
     df.insert(0, 'mc_iter', mc_iter)
     df.insert(0, 'n', n_val)
+    df.insert(0, 'epsilon_neg', epsilon_neg)
+    df.insert(0, 'epsilon_pos', epsilon_pos)
     return df
 
 
@@ -276,7 +278,7 @@ def metrics_to_df(res, n_arr, setting, data_val, ci=0.95, n_jobs=-1):
     Fully parallelized version: evaluates metrics for each theta separately.
 
     Args:
-        res (list): List of sim_theta outputs (each with 'theta_arr').
+        res (list): List of sim_theta outputs (each with 'theta_arr', 'epsilon_pos', 'epsilon_neg').
         n_arr (list): Corresponding sample sizes.
         setting (str): Experiment label to tag results.
         data_val (pd.DataFrame): Validation data for evaluation.
@@ -288,12 +290,14 @@ def metrics_to_df(res, n_arr, setting, data_val, ci=0.95, n_jobs=-1):
     """
     jobs = []
     for rr, n_val in zip(res, n_arr):
+        epsilon_pos = rr.get('epsilon_pos')
+        epsilon_neg = rr.get('epsilon_neg')
         for mc_iter, theta_row in enumerate(rr['theta_arr']):
-            jobs.append((n_val, mc_iter, theta_row))
+            jobs.append((n_val, mc_iter, theta_row, epsilon_pos, epsilon_neg))
 
     results = Parallel(n_jobs=n_jobs)(
-        delayed(_eval_one_theta)(n_val, mc_iter, theta_row, data_val, ci)
-        for n_val, mc_iter, theta_row in tqdm(jobs, desc="Evaluating θ metrics")
+        delayed(_eval_one_theta)(n_val, mc_iter, theta_row, epsilon_pos, epsilon_neg, data_val, ci)
+        for n_val, mc_iter, theta_row, epsilon_pos, epsilon_neg in tqdm(jobs, desc="Evaluating metrics for given values of theta")
     )
 
     df = pd.concat(results, ignore_index=True)
@@ -301,6 +305,7 @@ def metrics_to_df(res, n_arr, setting, data_val, ci=0.95, n_jobs=-1):
     df['value'] = pd.to_numeric(df['value'])
 
     return df
+
 
 
 def coverage(metrics_est, metrics_true, simplify=False):
