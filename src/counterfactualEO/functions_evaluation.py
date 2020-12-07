@@ -308,7 +308,7 @@ def metrics_to_df(res, n_arr, setting, data_val, ci=0.95, n_jobs=-1):
 
 
 
-def coverage(metrics_est, metrics_true, simplify=False):
+def coverage(metrics_est, metrics_true, simplify=True):
     """
     Calculate CI coverage rate based on true metric values.
 
