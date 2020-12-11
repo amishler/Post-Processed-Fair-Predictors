@@ -16,6 +16,9 @@ The module supports two core experimental tasks:
 1. Estimating a counterfactually fair predictor (theta-hat) under noise
 2. Evaluating a fixed predictor (theta) across multiple sample sizes
 """
+import warnings
+
+from itertools import product
 from joblib import Parallel, delayed
 import numpy as np
 import pandas as pd
@@ -67,8 +70,12 @@ def generate_data_pre(n, prob_A, beta_X, beta_D, beta_Y0, beta_Y1,
     Y1 = np.random.binomial(n=1, p=Y1_probs)
     Y = D * Y1 + (1 - D) * Y0
 
-    data = np.concatenate([AX, D, Y], axis=1)
-    data = pd.DataFrame(data, columns=['A', 'X1', 'X2', 'X3', 'X4', 'D', 'Y'])
+    ## Nuisance parameter phi
+    phi = (1 - D) / (1 - D_probs) * (Y - Y0_probs) + Y0_probs
+
+    data = np.concatenate([AX, D, Y0, Y1, Y, D_probs, Y0_probs, phi], axis=1)
+    data = pd.DataFrame(data, columns=['A', 'X1', 'X2', 'X3', 'X4', 'D',
+                                       'Y0', 'Y1', 'Y', 'pi', 'mu0', 'phi'])
 
     return data
 
@@ -331,12 +338,13 @@ def add_noise_logit(n_arr, mc_reps, data_params, obj_true, pos_true, neg_true,
     neg_arr = np.zeros((n_rows, 4))
 
     for j, n in enumerate(n_arr):
-        print('Sample size {}:'.format(n))
+        if verbose:
+            print('Sample size {}:'.format(n))
         for i in range(j * mc_reps, j * mc_reps + mc_reps):
             if verbose and (i % 10 == 0):
                 print("...Round {}".format(i))
 
-                ## Generate data
+            ## Generate data
             data_train = generate_data_post_noisy(n, noise_coef, **data_params)
 
             ## Compute the LP coefficients
@@ -365,7 +373,7 @@ def add_noise_logit(n_arr, mc_reps, data_params, obj_true, pos_true, neg_true,
 
 
 def add_noise_expit(n_arr, mc_reps, data_params, obj_true, pos_true, neg_true,
-                    trunc_pi=0.975, verbose=True):
+                    noise_coef, trunc_pi=0.975, verbose=True):
     """
     Add noise directly to nuisance parameters (in probability space) and compute 
     effect on LP coefficients.
@@ -378,14 +386,18 @@ def add_noise_expit(n_arr, mc_reps, data_params, obj_true, pos_true, neg_true,
     Args:
         n_arr (list): List of sample sizes.
         mc_reps (int): Number of Monte Carlo repetitions per sample size.
-        data_params (dict): Parameters for data generation.
+        data_params (dict): Parameters for data generation using
+          generate_data_post().
         obj_true, pos_true, neg_true (np.ndarray): Ground truth LP coefficients.
         trunc_pi (float): Truncation value for pi.
         verbose (bool): Whether to print progress updates.
 
     Returns:
-        Tuple[pd.DataFrame, pd.DataFrame]: (Summary dataframe of results, 
-        final dataset used).
+        pd.DataFrame: Summary dataframe of results. Gives the LP coefficients
+         estimated from the noisy versions of the nuisance parameters as well as 
+         the total L2 distances of each set of 4 coefficients (the objective
+         function, the fairness constraints for epsilon_pos, and the fairness
+         constraints for epsilon_neg) from the true optimal values.
     """
     n_rows = len(n_arr) * mc_reps
     obj_arr = np.zeros((n_rows, 4))
@@ -393,15 +405,16 @@ def add_noise_expit(n_arr, mc_reps, data_params, obj_true, pos_true, neg_true,
     neg_arr = np.zeros((n_rows, 4))
 
     for j, n in enumerate(n_arr):
-        print('Sample size {}:'.format(n))
+        if verbose:
+            print('Sample size {}:'.format(n))
         for i in range(j * mc_reps, j * mc_reps + mc_reps):
             if verbose and (i % 10 == 0):
                 print("...Round {}".format(i))
 
-                ## Generate data
+            ## Generate data
             data_train = generate_data_post(n, **data_params)
-            mu0_noise = np.random.uniform(-1, 1, n) / n ** (0.26) * 10
-            pi_noise = np.random.uniform(-1, 1, n) / n ** (0.26) * 10
+            mu0_noise = np.random.uniform(-1, 1, n) * noise_coef / n ** (0.26)
+            pi_noise = np.random.uniform(-1, 1, n) * noise_coef / n ** (0.26)
             data_train['muhat0'] = (data_train['mu0'] + mu0_noise).clip(0, 1)
             data_train['pihat'] = (data_train['pi'] + pi_noise).clip(0,
                                                                      trunc_pi)
@@ -430,95 +443,9 @@ def add_noise_expit(n_arr, mc_reps, data_params, obj_true, pos_true, neg_true,
 
     comb = pd.DataFrame(np.concatenate([obj_arr, pos_arr, neg_arr], axis=0))
     out = pd.concat([n_col, id_col, comb, dist_col], axis=1)
-    out.columns = ['n', 'id', 'comp0', 'comp1', 'comp2', 'comp3', 'L2']
+    out.columns = ['n', 'id', 'coef1', 'coef2', 'coef3', 'coef4', 'L2']
 
-    return out, data_train
-
-
-def sim_theta(n, mc_reps, noise_coef, data_params, epsilon_pos, epsilon_neg,
-              A='A', R='R', outcome='phihat', verbose=False, n_jobs=-1):
-    """
-    Simulate sampling variability in theta-hat under noisy nuisance parameters.
-
-    This function performs repeated data generation, nuisance perturbation, and
-    LP solving to study variability in the estimated decision rule theta.
-
-    Args:
-        n (int): Sample size per repetition.
-        mc_reps (int): Number of Monte Carlo repetitions.
-        noise_coef (float): Magnitude of noise added to nuisance parameters.
-        data_params (dict): Parameters for data generation.
-        epsilon_pos (float): Allowed deviation in FPR fairness constraint.
-        epsilon_neg (float): Allowed deviation in FNR fairness constraint.
-        A (str): Sensitive attribute column name.
-        R (str): Risk score column name.
-        outcome (str): Outcome used in optimization (e.g. 'phihat' or 'muhat0').
-        verbose (bool): Whether to print progress.
-        n_jobs (int): Number of parallel jobs (default: -1 for all available cores).
-
-    Returns:
-        dict: Dictionary with sample size and theta estimates across repetitions.
-    """
-    print(f'Simulating theta-hat for sample size {n} with {mc_reps} repetitions...')
-
-    def single_simulation(i):
-        if verbose and (i % 10 == 0):
-            print(f"...Round {i}")
-        data_train = generate_data_post_noisy(n, noise_coef, **data_params)
-        obj = risk_coefs(data_train, A=A, R=R, outcome=outcome)
-        fair_pos, fair_neg = fairness_coefs(data_train, A=A, R=R, outcome=outcome)
-        theta = optimize(obj, fair_pos, fair_neg, epsilon_pos, epsilon_neg)
-        return theta
-
-    results = Parallel(n_jobs=n_jobs)(
-        delayed(single_simulation)(i) for i in range(mc_reps)
-    )
-
-    theta_arr = np.vstack(results)
-    return {'n': n, 'theta_arr': theta_arr, 'epsilon_pos': epsilon_pos,
-            'epsilon_neg': epsilon_neg}
-
-
-def sim_task2(theta, noise_coef, n_arr, mc_reps, data_params,
-              outcome='phihat', ci_scale='logit', verbose=False, n_jobs=-1):
-    """
-    Parallel simulation of evaluating a fixed predictor under sampling variability.
-
-    For each sample size in `n_arr`, this function runs `mc_reps` Monte Carlo
-    evaluations, where each one generates a new dataset, adds noise to the
-    nuisance estimates, and computes evaluation metrics for a fixed predictor.
-
-    Args:
-        theta (np.ndarray): Fixed decision vector (e.g., from an LP solution).
-        noise_coef (float): Magnitude of nuisance parameter noise.
-        n_arr (List[int]): List of sample sizes to evaluate.
-        mc_reps (int): Number of Monte Carlo repetitions per sample size.
-        data_params (dict): Parameters for generating synthetic data.
-        outcome (str): Outcome column used for evaluation ('phihat' or 'muhat0').
-        ci_scale (str): Confidence interval scale ('logit' or 'expit').
-        verbose (bool): Whether to display progress during simulation.
-        n_jobs (int): Number of parallel jobs to run. Default (-1) uses all cores.
-
-    Returns:
-        pd.DataFrame: Long-format metric estimates with columns:
-                      ['n', 'mc_iter', 'metric', 'value', 'ci_lower', 'ci_upper']
-    """
-    def simulate_one(n, i):
-        if verbose and (i % 10 == 0):
-            print(f"[n={n}] Simulating run {i}")
-        data_val = generate_data_post_noisy(n, noise_coef, **data_params)
-        result = metrics(theta, data_val, outcome=outcome, ci_scale=ci_scale)
-        result.insert(0, 'mc_iter', i)
-        result.insert(0, 'n', n)
-        return result
-
-    tasks = [(n, i) for n in n_arr for i in range(mc_reps)]
-
-    results = Parallel(n_jobs=n_jobs)(
-        delayed(simulate_one)(n, i) for n, i in tasks
-    )
-
-    return pd.concat(results).reset_index(drop=True)
+    return out
 
 
 def simulate_true(n, data_params, epsilon_pos, epsilon_neg):
@@ -563,18 +490,206 @@ def simulate_true(n, data_params, epsilon_pos, epsilon_neg):
         'risk_coefs': risk_coefs_,
         'fairness_coefs_pos': fair_pos,
         'fairness_coefs_neg': fair_neg,
-        'metrics': evals
+        'metrics': evals,
+        'epsilon_pos': epsilon_pos,
+        'epsilon_neg': epsilon_neg
     }
 
 
-def add_optimal_values(metrics_df, optimal_values_df, value_col='value', new_col='optimal_value'):
+def simulate_task1(n, mc_reps, noise_coef, data_params, epsilon_pos, epsilon_neg,
+              A='A', R='R', outcome='phihat', verbose=False, n_jobs=-1):
     """
-    Merge metrics for a given theta-hat with corresponding metrics for the optimal fair predictor.
+    Simulate sampling variability in theta-hat under noisy nuisance parameters.
+
+    This function performs repeated data generation, nuisance perturbation, and
+    LP solving to study variability in the estimated decision rule theta.
+
+    Args:
+        n (int): Sample size per repetition.
+        mc_reps (int): Number of Monte Carlo repetitions.
+        noise_coef (float): Magnitude of noise added to nuisance parameters.
+        data_params (dict): Parameters for data generation.
+        epsilon_pos (float): Allowed deviation in FPR fairness constraint.
+        epsilon_neg (float): Allowed deviation in FNR fairness constraint.
+        A (str): Sensitive attribute column name.
+        R (str): Risk score column name.
+        outcome (str): Outcome used in optimization (e.g. 'phihat' or 'muhat0').
+        verbose (bool): Whether to print progress.
+        n_jobs (int): Number of parallel jobs (default: -1 for all available cores).
+
+    Returns:
+        dict: Dictionary with sample size and theta estimates across repetitions.
+    """
+    print(f'Simulating theta-hat for sample size {n} with {mc_reps} repetitions...')
+
+    def single_simulation(i):
+        if verbose and (i % 10 == 0):
+            print(f"...Round {i}")
+        data_train = generate_data_post_noisy(n, noise_coef, **data_params)
+        obj = risk_coefs(data_train, A=A, R=R, outcome=outcome)
+        fair_pos, fair_neg = fairness_coefs(data_train, A=A, R=R, outcome=outcome)
+        theta = optimize(obj, fair_pos, fair_neg, epsilon_pos, epsilon_neg)
+        return theta
+
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(single_simulation)(i) for i in range(mc_reps)
+    )
+
+    theta_arr = np.vstack(results)
+    return {
+        'n': n, 
+        'theta_arr': theta_arr, 
+        'epsilon_pos': epsilon_pos,
+        'epsilon_neg': epsilon_neg
+    }
+
+
+def simulate_task2(theta, noise_coef, n_arr, mc_reps, data_params,
+              outcome='phihat', ci=0.95, ci_scale='logit', verbose=False, n_jobs=-1):
+    """
+    Parallel simulation of evaluating a fixed predictor under sampling variability.
+
+    For each sample size in `n_arr`, this function runs `mc_reps` Monte Carlo
+    evaluations, where each one generates a new dataset, adds noise to the
+    nuisance estimates, and computes evaluation metrics for a fixed predictor.
+
+    Args:
+        theta (np.ndarray): Fixed decision vector (e.g., from an LP solution).
+        noise_coef (float): Magnitude of nuisance parameter noise.
+        n_arr (List[int]): List of sample sizes to evaluate.
+        mc_reps (int): Number of Monte Carlo repetitions per sample size.
+        data_params (dict): Parameters for generating synthetic data.
+        outcome (str): Outcome column used for evaluation ('phihat' or 'muhat0').
+        ci_scale (str): Confidence interval scale ('logit' or 'expit').
+        verbose (bool): Whether to display progress during simulation.
+        n_jobs (int): Number of parallel jobs to run. Default (-1) uses all cores.
+
+    Returns:
+        pd.DataFrame: Long-format metric estimates with columns:
+                      ['n', 'mc_iter', 'metric', 'value', 'ci_lower', 'ci_upper']
+    """
+    def simulate_one(n, i):
+        if verbose and (i % 10 == 0):
+            print(f"[n={n}] Simulating run {i}")
+        data_val = generate_data_post_noisy(n, noise_coef, **data_params)
+        result = metrics(theta, data_val, outcome=outcome, ci=ci, ci_scale=ci_scale)
+        result.insert(0, 'mc_iter', i)
+        result.insert(0, 'n', n)
+        return result
+
+    tasks = [(n, i) for n in n_arr for i in range(mc_reps)]
+
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(simulate_one)(n, i) for n, i in tasks
+    )
+
+    return pd.concat(results).reset_index(drop=True)
+
+
+# def simulate_performance_tradeoff(n, data_params, epsilon_pos, epsilon_neg):
+#     """Calculate accuracy-fairness tradeoff for optimal input predictor
+#     vs. the Bayes-optimal predictor.
+    
+#     Optimal input predictor refers to the Bayes-optimal predictor of Y0, not Y.
+#     This function is similar to simulate_true(), but instead of generating the
+#     data using generate_data_post(), which takes a model for the predictor R,
+#     this generates data using generate_data_pre() and then sets R to be the
+#     Bayes-optimal predictor based on the true values of mu0. 
+#     """
+#     ## Generate data
+#     data_train = generate_data_pre(n, **data_params)
+#     data_train['R'] = (data_train.mu0 >= 0.5).astype(float)  
+#     data_val = generate_data_pre(n, **data_params)
+#     data_val['R'] = (data_val.mu0 >= 0.5).astype(float)  
+
+#     ## Get 'true' loss and fairness constraints
+#     coefs_obj = risk_coefs(data_train, 'A', 'R', 'mu0')
+#     coefs_pos, coefs_neg = fairness_coefs(data_train, 'A', 'R', 'mu0')
+
+#     ## Get best derived predictor
+#     theta = optimize(coefs_obj, coefs_pos, coefs_neg, epsilon_pos, epsilon_neg)   
+
+#     # Evaluate best derived predictor on a new, independent dataset 
+#     out = metrics(theta, data_val, outcome='mu0', ci=None)
+#     out = out.assign(epsilon_pos = epsilon_pos, epsilon_neg = epsilon_neg)
+
+#     return out
+
+
+def simulate_performance_tradeoff(
+    n, data_params, epsilon_pos_arr, epsilon_neg_arr, n_jobs=-1
+):
+    """
+    Calculate accuracy-fairness tradeoff for the optimal input predictor
+    vs. the Bayes-optimal predictor across multiple (ε_pos, ε_neg) combinations.
+    
+    Optimal input predictor refers to the Bayes-optimal predictor of Y0, not Y.
+    This function is similar to simulate_true(), but instead of generating the
+    data using generate_data_post(), which takes a model for the predictor R,
+    this generates data using generate_data_pre() and then sets R to be the
+    Bayes-optimal predictor based on the true values of mu0. 
+
+    Args:
+        n (int): Sample size.
+        data_params (dict): Parameters to pass to `generate_data_pre`.
+        epsilon_pos_arr (list or np.ndarray): Candidate ε_pos values.
+        epsilon_neg_arr (list or np.ndarray): Candidate ε_neg values.
+        n_jobs (int): Number of parallel jobs (default: -1 = all cores).
+
+    Returns:
+        pd.DataFrame: Long-format metric results with ε values annotated.
+    """
+    # Step 1: Validate and filter epsilon combinations
+    valid_combos = []
+    for eps_pos, eps_neg in product(epsilon_pos_arr, epsilon_neg_arr):
+        if not (0 <= eps_pos <= 1):
+            warnings.warn(f"Ignoring invalid ε_pos = {eps_pos}")
+            continue
+        if not (0 <= eps_neg <= 1):
+            warnings.warn(f"Ignoring invalid ε_neg = {eps_neg}")
+            continue
+        valid_combos.append((eps_pos, eps_neg))
+
+    if not valid_combos:
+        raise ValueError("No valid (ε_pos, ε_neg) combinations found.")
+
+    # Step 2: Generate data once and compute LP coefficients
+    data_train = generate_data_pre(n, **data_params)
+    data_train['R'] = (data_train.mu0 >= 0.5).astype(float)
+
+    data_val = generate_data_pre(n, **data_params)
+    data_val['R'] = (data_val.mu0 >= 0.5).astype(float)
+
+    coefs_obj = risk_coefs(data_train, 'A', 'R', 'mu0')
+    coefs_pos, coefs_neg = fairness_coefs(data_train, 'A', 'R', 'mu0')
+
+    # Step 3: Define function for computing metrics for one (ε_pos, ε_neg)
+    def evaluate_combo(eps_pos, eps_neg):
+        theta = optimize(coefs_obj, coefs_pos, coefs_neg, eps_pos, eps_neg)
+        df = metrics(theta, data_val, outcome='mu0', ci=None)
+        df['epsilon_pos'] = eps_pos
+        df['epsilon_neg'] = eps_neg
+        return df
+
+    # Step 4: Parallelize
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(evaluate_combo)(eps_pos, eps_neg) for eps_pos, eps_neg in valid_combos
+    )
+
+    return pd.concat(results, ignore_index=True)
+
+
+def add_reference_values(metrics_df, reference_values_df, value_col='value', new_col='reference_value'):
+    """
+    Merge metrics for a given theta-hat with corresponding reference metric values.
+
+    In general, the reference metrics will be either (1) the values of the
+    optimal fair predictor (for task 1) or the "true" values from the oracle (for task 2).
 
     Args:
         metrics_df (pd.DataFrame): Long-format DataFrame with simulation results.
             Must include a 'metric' column.
-        optimal_values_df (pd.DataFrame): DataFrame containing metrics for the
+        reference_values_df (pd.DataFrame): DataFrame containing metrics for the
             optimal fair predictor, containing a 'metric' column and a column 
             (default 'value') to merge.
         value_col (str): Name of the column in `optimal_values_df` containing the
@@ -588,14 +703,14 @@ def add_optimal_values(metrics_df, optimal_values_df, value_col='value', new_col
         ValueError: If required columns are missing.
     """
     required_cols = {'metric', value_col}
-    if not required_cols.issubset(optimal_values_df.columns):
-        raise ValueError(f"`optimal_values_df` must contain columns: {required_cols}")
+    if not required_cols.issubset(reference_values_df.columns):
+        raise ValueError(f"`reference_values_df` must contain columns: {required_cols}")
 
     if 'metric' not in metrics_df.columns:
         raise ValueError("`metrics_df` must contain a 'metric' column for merging.")
 
     merged = metrics_df.merge(
-        optimal_values_df[['metric', value_col]].rename(columns={value_col: new_col}),
+        reference_values_df[['metric', value_col]].rename(columns={value_col: new_col}),
         on='metric',
         how='left'
     )
