@@ -12,7 +12,10 @@ def train_nuisance(train, test, A, X, R, D, Y, learner_pi, learner_mu,
     """Train nuisance regressions."""
     train = train.reset_index()
     test = test.reset_index()
-    pred_cols = list(itertools.chain.from_iterable([A, X, R]))
+    # pred_cols = list(itertools.chain.from_iterable([A, X, R]))
+    # TODO: separate models for the two levels of the sensitive feature A
+    # TODO: this doesn't handle categorical features. They need to be transformed beforehand.
+    pred_cols = [A] + X + [R]
     learner_pi.fit(train[pred_cols], train[D])
     learner_mu.fit(train.loc[train.D.eq(0), pred_cols],
                    train.loc[train.D.eq(0), Y])
@@ -416,9 +419,9 @@ def _metrics_to_df(res):
     return out
 
 
-def metrics_to_df(res, n_arr, setting, data_val):
+def metrics_to_df(res, n_arr, setting, data_val, ci=0.95):
     out = [np.apply_along_axis(metrics, 1, rr['theta_arr'], data=data_val,
-                               outcome='mu0') for rr in res]
+                               outcome='mu0', ci=ci) for rr in res]
     out = pd.concat([_metrics_to_df(arr) for arr in out], keys=n_arr)
     out = out.reset_index().drop(columns='level_1')
     out.columns = ['n', 'mc_iter', 'metric', 'value', 'ci_lower', 'ci_upper']
