@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "counterfactualEO"
+version = "0.1"
+description = "Post-process binary predictors to satisfy counterfactual equalized odds."
+authors = [
+    { name = "Alan Mishler", email = "contact@alanmishler.com" }
+]
+license = { text = "MIT" }
+dependencies = [
+    "cvxpy[ecos]",
+    "numpy",
+    "pandas",      
+    "scipy",
+    "seaborn",
+    "scikit-learn"
+]
+requires-python = ">=3.8"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
