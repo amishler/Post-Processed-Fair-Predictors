@@ -253,7 +253,7 @@ def optimize(risk_coefs_, coefs_pos, coefs_neg, epsilon_pos, epsilon_neg):
                    coefs_neg @ theta <= epsilon_neg,
                    coefs_neg @ theta >= -epsilon_neg]
     prob = cp.Problem(objective, constraints)
-    theta = prob.solve(solver=cp.ECOS_BB)
+    prob.solve(solver=cp.ECOS_BB)
 
     return theta.value
 
