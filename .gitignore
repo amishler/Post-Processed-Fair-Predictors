@@ -13,3 +13,8 @@
 # Jupyter files
 .ipynb_checkpoints/
 
+# VSCode files
+.vscode
+
+# Scratch folder
+scratch/
