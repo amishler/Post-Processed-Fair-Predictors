@@ -26,3 +26,44 @@ def real_data():
     with open(base_path / "test_values1.pickle", "rb") as f:
         test_values = pickle.load(f)
     return df, test_values
+
+
+class MockRiskModel:
+    """Simple mock model that returns deterministic predictions."""
+    def predict(self, X):
+        return np.random.binomial(1, 0.5, size=(X.shape[0],))
+
+
+@pytest.fixture
+def mock_model():
+    """Returns a simple binary classifier mock."""
+    return MockRiskModel()
+
+
+@pytest.fixture
+def mock_data_params(mock_model):
+    """Returns synthetic parameter values for generating mock data."""
+    return {
+        'prob_A': 0.3,
+        'beta_X': np.array([0.5, 0.2, -0.1, 0.3]),
+        'beta_D': np.array([0.2, 0.1, -0.3, 0.2, -0.1, 0.4]),  # AXR: A + 4 Xs + R = 6 features
+        'beta_Y0': np.array([0.3, 0.2, 0.1, -0.2, 0.1]),
+        'beta_Y1': np.array([-0.1, 0.4, 0.2, 0.1, 0.2]),
+        'model_R': mock_model,
+    }
+
+
+@pytest.fixture
+def mock_theta():
+    """Returns a simple valid theta vector (e.g. from optimization)."""
+    return np.array([0.2, 0.3, 0.1, 0.4])
+
+
+@pytest.fixture
+def mock_true_coefs():
+    """Returns synthetic 'true' LP coefficients for testing distance comparisons."""
+    return {
+        "obj": np.array([0.1, 0.2, -0.1, 0.0]),
+        "pos": np.array([0.3, 0.2, -0.2, -0.1]),
+        "neg": np.array([-0.1, -0.2, 0.2, 0.1]),
+    }
