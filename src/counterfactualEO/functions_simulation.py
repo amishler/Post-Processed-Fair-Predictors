@@ -2,9 +2,12 @@ import numpy as np
 import pandas as pd
 from scipy.special import expit
 from sklearn.metrics import confusion_matrix, classification_report
+
 from .functions_estimation import (
     optimize, risk_coefs, fairness_coefs
 )
+from .functions_evaluation import metrics
+
 
 def generate_data_pre(n, prob_A, beta_X, beta_D, beta_Y0, beta_Y1,
                       trunc_pi=0.975):
@@ -100,8 +103,7 @@ def generate_data_post(n, prob_A, beta_X, beta_D, beta_Y0, beta_Y1, model_R,
 
 
 def generate_data_post_noisy(n, noise_coef, prob_A, beta_X, beta_D, beta_Y0,
-                             beta_Y1,
-                             model_R, trunc_pi=0.975):
+                             beta_Y1, model_R, trunc_pi=0.975):
     """
     Generate synthetic data at time 1 with added noise to simulate nuisance 
     estimation error.
@@ -127,7 +129,7 @@ def generate_data_post_noisy(n, noise_coef, prob_A, beta_X, beta_D, beta_Y0,
             ['A', 'X1', ..., 'X4', 'R', 'D', 'Y0', 'Y1', 'Y',
              'pi', 'pihat', 'mu0', 'muhat0', 'phi', 'phihat'].
     """
-    A = np.random.binomial(1, 0.3, size=(n, 1))
+    A = np.random.binomial(1, prob_A, size=(n, 1))
     X = np.random.normal(beta_X * A, size=(n, 4))
     AX = np.concatenate([A, X], axis=1)
 
@@ -163,7 +165,7 @@ def generate_data_post_noisy(n, noise_coef, prob_A, beta_X, beta_D, beta_Y0,
     return data
 
 
-def check_data_post(data, A='A', D='D', Y='Y', Y0='Y0', pi='pi'):
+def check_data_post(data, A='A', D='D', R='R', Y='Y', Y0='Y0', pi='pi'):
     """
     Print diagnostic statistics to inspect distribution and validity of 
     post-intervention data.
@@ -179,6 +181,7 @@ def check_data_post(data, A='A', D='D', Y='Y', Y0='Y0', pi='pi'):
         data (pd.DataFrame): The post-intervention dataset.
         A (str): Name of the sensitive attribute column.
         D (str): Name of the decision column.
+        R (str): Name of the prediction column.
         Y (str): Name of the observed outcome column.
         Y0 (str): Name of the counterfactual outcome under D = 0.
         pi (str): Name of the propensity score column.
@@ -192,9 +195,9 @@ def check_data_post(data, A='A', D='D', Y='Y', Y0='Y0', pi='pi'):
     print('---------------')
     print(pd.crosstab(data[A], data[Y0]))
     print('---------------')
-    print(pd.crosstab(data['A'], data['Y']))
+    print(pd.crosstab(data[A], data[Y]))
     print('---------------')
-    print('\nHow often Y = Y0:', np.mean(data['Y0'] == data['Y']), '\n')
+    print('\nHow often Y = Y0:', np.mean(data[Y0] == data[Y]), '\n')
 
     print('===============================')
     print('Properties of input predictor R')
@@ -203,17 +206,17 @@ def check_data_post(data, A='A', D='D', Y='Y', Y0='Y0', pi='pi'):
     print('-------------------------')
     print('Confusion matrix for Y, R')
     print('-------------------------')
-    print(confusion_matrix(data['Y'], data['R'])/data.shape[0], '\n')
+    print(confusion_matrix(data[Y], data[R])/data.shape[0], '\n')
 
     print('------------------------------')
     print('Classification report for Y, R')
     print('------------------------------')
-    print(classification_report(data['Y'], data['R'], target_names=['Y = 0', 'Y = 1']), '\n')
+    print(classification_report(data[Y], data[R], target_names=['Y = 0', 'Y = 1']), '\n')
 
     print('-------------------------------')
     print('Classification report for Y0, R')
     print('-------------------------------')
-    print(classification_report(data['Y0'], data['R'], target_names=['Y0 = 0', 'Y0 = 1']), '\n')
+    print(classification_report(data[Y0], data[R], target_names=['Y0 = 0', 'Y0 = 1']), '\n')
 
     print('------------------------------------------------------')
     print('Distribution of propensity scores by sensitive feature')
@@ -276,7 +279,7 @@ def dist_to_ref(arr, vec):
 
 
 def add_noise_logit(n_arr, mc_reps, data_params, obj_true, pos_true, neg_true,
-                    noise_coef, trunc_pi=0.975, verbose=True):
+                    noise_coef, verbose=True):
     """
     Add noise to the logit-transformed nuisance parameters (pi, mu0) and compute 
     effect on LP coefficients.
@@ -316,9 +319,9 @@ def add_noise_logit(n_arr, mc_reps, data_params, obj_true, pos_true, neg_true,
             data_train = generate_data_post_noisy(n, noise_coef, **data_params)
 
             ## Compute the LP coefficients
-            obj = risk_coefs(data_train, A=A, R=R, outcome='phihat')
+            obj = risk_coefs(data_train, A='A', R='R', outcome='phihat')
             obj_arr[i, :] = obj
-            fair_pos, fair_neg = fairness_coefs(data_train, A=A, R=R,
+            fair_pos, fair_neg = fairness_coefs(data_train, A='A', R='R',
                                                 outcome='phihat')
             pos_arr[i, :] = fair_pos
             neg_arr[i, :] = fair_neg
@@ -387,9 +390,9 @@ def add_noise_expit(n_arr, mc_reps, data_params, obj_true, pos_true, neg_true,
                                    data_train['muhat0']
 
             ## Compute the LP coefficients
-            obj = risk_coefs(data_train, A=A, R=R, outcome='phihat')
+            obj = risk_coefs(data_train, A='A', R='R', outcome='phihat')
             obj_arr[i, :] = obj
-            fair_pos, fair_neg = fairness_coefs(data_train, A=A, R=R,
+            fair_pos, fair_neg = fairness_coefs(data_train, A='A', R='R',
                                                 outcome='phihat')
             pos_arr[i, :] = fair_pos
             neg_arr[i, :] = fair_neg
@@ -412,7 +415,7 @@ def add_noise_expit(n_arr, mc_reps, data_params, obj_true, pos_true, neg_true,
 
 
 def sim_theta(n, mc_reps, noise_coef, data_params, epsilon_pos, epsilon_neg,
-              A='A', R='R', outcome='phihat', trunc_pi=0.975, verbose=False):
+              A='A', R='R', outcome='phihat', verbose=False):
     """
     Simulate sampling variability in theta-hat under noisy nuisance parameters.
 
@@ -458,7 +461,7 @@ def sim_theta(n, mc_reps, noise_coef, data_params, epsilon_pos, epsilon_neg,
 
 
 def _sim_task2(theta, noise_coef, n, mc_reps, data_params, outcome='phihat',
-               trunc_pi=0.975, ci_scale='logit', verbose=False):
+               ci_scale='logit', verbose=False):
     """
     Run a single experiment evaluating a fixed predictor under sampling variability.
 
@@ -506,8 +509,8 @@ def _sim_task2(theta, noise_coef, n, mc_reps, data_params, outcome='phihat',
     return out
 
 
-def sim_task2(theta, noise_coef, n_arr, mc_reps, data_params, trunc_pi=0.975,
-              outcome='phihat', ci_scale='logit', verbose=False):
+def sim_task2(theta, noise_coef, n_arr, mc_reps, data_params, outcome='phihat', 
+              ci_scale='logit', verbose=False):
     """
     Evaluate a fixed predictor across multiple sample sizes under repeated sampling.
 
