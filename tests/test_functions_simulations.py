@@ -10,8 +10,8 @@ from counterfactualEO.functions_simulation import (
     dist_to_ref,
     add_noise_logit,
     add_noise_expit,
-    sim_task2,
-    sim_theta,
+    simulate_task2,
+    simulate_task1,
     simulate_true
 )
 
@@ -25,7 +25,7 @@ def test_generate_data_pre_shapes():
         beta_Y1=np.ones(5)
     )
     assert isinstance(df, pd.DataFrame)
-    assert df.shape[1] == 7
+    assert df.shape[1] == 12
 
 
 def test_generate_data_post_shapes(mock_model):
@@ -61,8 +61,8 @@ def test_dist_to_ref():
     assert np.allclose(dists, [0, np.linalg.norm([3, 1, -1, -3])])
 
 
-def test_sim_theta_output(mock_data_params):
-    out = sim_theta(n=50, mc_reps=3, noise_coef=0.1, 
+def test_simulate_task1_output(mock_data_params):
+    out = simulate_task1(n=50, mc_reps=3, noise_coef=0.1, 
                        data_params=mock_data_params,
                        epsilon_pos=0.1, epsilon_neg=0.1)
     assert 'n' in out and 'theta_arr' in out
@@ -94,12 +94,13 @@ def test_add_noise_logit_outputs_shape(mock_data_params, mock_true_coefs, n_arr,
 
 @pytest.mark.parametrize("n_arr, mc_reps", [([50], 3)])
 def test_add_noise_expit_outputs_shape(mock_data_params, mock_true_coefs, n_arr, mc_reps):
-    df, _ = add_noise_expit(n_arr=n_arr,
+    df = add_noise_expit(n_arr=n_arr,
                             mc_reps=mc_reps,
                             data_params=mock_data_params,
                             obj_true=mock_true_coefs["obj"],
                             pos_true=mock_true_coefs["pos"],
                             neg_true=mock_true_coefs["neg"],
+                            noise_coef=30,
                             trunc_pi=0.975,
                             verbose=False)
     assert isinstance(df, pd.DataFrame)
@@ -107,7 +108,7 @@ def test_add_noise_expit_outputs_shape(mock_data_params, mock_true_coefs, n_arr,
     assert df.shape[0] == len(n_arr) * mc_reps * 3
 
 
-def test_sim_task2_format(mock_data_params, mock_theta):
-    out = sim_task2(mock_theta, noise_coef=0.1, n_arr=[50], mc_reps=3, data_params=mock_data_params)
+def test_simulate_task2_format(mock_data_params, mock_theta):
+    out = simulate_task2(mock_theta, noise_coef=0.1, n_arr=[50], mc_reps=3, data_params=mock_data_params)
     assert isinstance(out, pd.DataFrame)
     assert set(["n", "mc_iter", "metric", "value", "ci_lower", "ci_upper"]).issubset(out.columns)
