@@ -24,6 +24,127 @@ def vec_to_df(coefs, n_arr, coefs_id):
     return out
 
 
+def transform_metrics(res, reference_col, scale=0.5):
+    """
+    Center and scale metric values using their respective reference values.
+
+    - For 'risk' and 'risk_change', uses reference_col.
+    - For 'gap_FPR', uses `epsilon_pos`.
+    - For 'gap_FNR', uses `epsilon_neg`.
+
+    Args:
+        res (pd.DataFrame): Input long-format DataFrame with columns including
+                            'metric', 'value', reference_col, 'epsilon_pos', 'epsilon_neg'.
+        scale (float): Exponent used in scaling (e.g., 0.5 for sqrt(n)).
+        id_vars (tuple): Columns to group by (usually 'mc_iter' and 'n').
+
+    Returns:
+        pd.DataFrame: DataFrame with centered and scaled 'value' column.
+    """
+    res = res.copy()
+    res['scaling'] = np.power(res['n'], scale)
+
+    def center(row):
+        if row['metric'] == 'gap_FPR' and 'epsilon_pos' in row:
+            return row['value'] - row['epsilon_pos']
+        elif row['metric'] == 'gap_FNR' and 'epsilon_neg' in row:
+            return row['value'] - row['epsilon_neg']
+        else:
+            return row['value'] - row[reference_col]
+
+    res['value'] = res.apply(center, axis=1) * res['scaling']
+    res = res.drop(columns='scaling')
+
+    return res
+
+
+def plot_metrics(df, row=None, col=None,
+                 row_order=None, col_order=None,
+                 reference_col=None, centered=False, **kwargs):
+    """
+    Plot metrics with confidence intervals and reference lines from simulation results.
+
+    Args:
+        df (pd.DataFrame): DataFrame with columns: 'n', 'metric', 'value', optionally
+                           reference_col, 'epsilon_pos', 'epsilon_neg'.
+        row (str or None): Variable to facet by row.
+        col (str or None): Variable to facet by column.
+        row_order (list): Order for rows.
+        col_order (list): Order for columns.
+        reference_col (str or None): Column to use for reference horizontal line.
+        centered (bool): If True, draw horizontal reference lines at 0.
+        **kwargs: Passed to sns.FacetGrid.
+
+    Returns:
+        sns.FacetGrid
+    """
+    # Treat 'n' as categorical
+    n_arr = sorted(df['n'].unique())
+
+    # Handle facet grid setup
+    facet_kws = dict()
+    if row:
+        facet_kws['row'] = row
+        if row_order is not None:
+            facet_kws['row_order'] = row_order
+    if col:
+        facet_kws['col'] = col
+        if col_order is not None:
+            facet_kws['col_order'] = col_order
+
+    g = sns.FacetGrid(df, margin_titles=True, despine=False, sharey=False, **facet_kws, **kwargs)
+    g.map_dataframe(sns.pointplot, x='n', y='value', errorbar='sd', order=n_arr)
+
+    for ax in g.axes.flat:
+        ax.set_xticks(range(len(n_arr)))
+        ax.set_xticklabels(n_arr, rotation=45)
+
+    # Draw reference lines
+    for key, ax in g.axes_dict.items():
+        if isinstance(key, tuple):
+            facet_row, facet_col = key if len(key) == 2 else (key[0], None)
+        else:
+            facet_row, facet_col = (key, None) if row else (None, key)
+
+        m = facet_col or facet_row or df['metric'].unique()[0]
+        facet_df = df.copy()
+        if row and facet_row is not None:
+            facet_df = facet_df[facet_df[row] == facet_row]
+        if col and facet_col is not None:
+            facet_df = facet_df[facet_df[col] == facet_col]
+
+        if facet_df.empty:
+            continue
+
+        if centered:
+            ax.axhline(0, ls='--', color='gray', alpha=0.7)
+        else:
+            if m == 'gap_FPR':
+                if 'epsilon_pos' in facet_df.columns:
+                    ref_val = facet_df['epsilon_pos'].iloc[0]
+                elif reference_col in facet_df.columns:
+                    ref_val = facet_df[reference_col].iloc[0]
+                else:
+                    ref_val = 0
+                ax.axhline(ref_val, ls='--', color='gray', label='ε_pos')
+            elif m == 'gap_FNR':
+                if 'epsilon_neg' in facet_df.columns:
+                    ref_val = facet_df['epsilon_neg'].iloc[0]
+                elif reference_col in facet_df.columns:
+                    ref_val = facet_df[reference_col].iloc[0]
+                else:
+                    ref_val = 0
+                ax.axhline(ref_val, ls='--', color='gray', label='ε_neg')
+            elif reference_col in facet_df.columns:
+                ref_val = facet_df[reference_col].iloc[0]
+                ax.axhline(ref_val, ls='--', color='gray', label='reference')
+
+    g.set_titles(row_template='{row_name}', col_template='{col_name}')
+    g.tight_layout()
+
+    return g
+
+
 # def combine_coefs(results, n_arr):
 #     """Combine LP coefficients from simulation output into a dataframe."""
 #     obj = pd.DataFrame(
@@ -36,28 +157,34 @@ def vec_to_df(coefs, n_arr, coefs_id):
 #     ])
 
 
-# def plot_noise(df, obj_true, pos_true, neg_true, errorbar='sd'):
-#     xlim = (df['n'].min(), df['n'].max())
+def plot_noise(df, obj_true, pos_true, neg_true, errorbar='sd'):
+    n_arr = sorted(df['n'].unique())
+    xlim = (df['n'].min(), df['n'].max())
 
-#     df = df.melt(id_vars = ['n', 'id'])
-#     g = sns.FacetGrid(df, row = 'id', col = 'variable', xlim = xlim)
-#     g.map(sns.pointplot, 'n', 'value', order = n_arr, ci = ci)
-#     g.set_xticklabels(rotation = 45)
+    df = df.melt(id_vars = ['n', 'id'])
+    g = sns.FacetGrid(df, row = 'id', col = 'variable', xlim = xlim)
+    g.map(sns.pointplot, 'n', 'value', order = n_arr, errorbar=errorbar)
+    g.set_xticklabels(rotation = 45)
 
-#     for i, val in enumerate(obj_true):
-#         ax = g.axes[0, i]
-#         ax.hlines(val, *ax.get_xlim(), color = 'red')
-#     for i, val in enumerate(pos_true):
-#         ax = g.axes[1, i]
-#         ax.hlines(0, *ax.get_xlim())
-#         ax.hlines(val, *ax.get_xlim(), color = 'red')
-#     for i, val in enumerate(neg_true):
-#         ax = g.axes[2, i]
-#         ax.hlines(0, *ax.get_xlim())
-#         ax.hlines(val, *ax.get_xlim(), color = 'red')
-#     for i in range(3):
-#         ax = g.axes[i, 4]
-#         ax.hlines(0, *ax.get_xlim())
+    for i, val in enumerate(obj_true):
+        ax = g.axes[0, i]
+        ax.hlines(val, *ax.get_xlim(), color = 'red')
+    for i, val in enumerate(pos_true):
+        ax = g.axes[1, i]
+        # ax.hlines(0, *ax.get_xlim())
+        ax.hlines(val, *ax.get_xlim(), color = 'red')
+    for i, val in enumerate(neg_true):
+        ax = g.axes[2, i]
+        # ax.hlines(0, *ax.get_xlim())
+        ax.hlines(val, *ax.get_xlim(), color = 'red')
+    for i in range(3):
+        ax = g.axes[i, 4]
+        ax.hlines(0, *ax.get_xlim())
+    
+    g.figure.suptitle('Noisy Coefficients vs True Values, and L2 Distances', fontsize=16)
+    g.tight_layout()
+    
+    return g
 
 
 # def plot_coefs(results):
@@ -92,302 +219,4 @@ def vec_to_df(coefs, n_arr, coefs_id):
 #         ax.hlines(val, *ax.get_xlim())
 
 
-# def plot_metrics(results, epsilon_pos, epsilon_neg):
-#     """Plot risk and fairness gaps."""
-#     ## Plot risk and fairness gaps as a function of sample size,
-#     ## with true minimum risk and true fairness gaps for reference.
 
-#     metrics_Y0 = pd.concat(results['metrics_Y0_noisy'], keys=n_arr)
-#     metrics_Y0 = metrics_Y0.reset_index().drop(columns='level_1').rename(
-#         columns={'level_0': 'n'})
-#     metrics_Y = pd.concat(results['metrics_Y_noisy'], keys=n_arr)
-#     metrics_Y = metrics_Y.reset_index().drop(columns='level_1').rename(
-#         columns={'level_0': 'n'})
-#     metrics = pd.concat([metrics_Y0, metrics_Y])
-
-#     m = results['metrics_Y0_best']
-#     risk = m.loc[m.Metric == 'Risk', 'Value'].values[0]
-
-#     g = sns.FacetGrid(metrics, row='Outcome', col='Metric',
-#                       col_order=['risk', 'gap_FPR', 'gap_FNR'])
-#     g.map(sns.pointplot, 'n', 'value', order=n_arr)
-#     g.set_xticklabels(rotation=45)
-
-#     g.axes[0, 0].hlines(risk, *g.axes[0, 0].get_xlim())
-#     g.axes[1, 0].hlines(risk, *g.axes[1, 0].get_xlim())
-
-#     g.axes[0, 1].hlines(epsilon_pos, *g.axes[0, 1].get_xlim())
-#     g.axes[1, 1].hlines(epsilon_pos, *g.axes[1, 1].get_xlim())
-
-#     g.axes[0, 2].hlines(epsilon_neg, *g.axes[0, 2].get_xlim())
-#     g.axes[1, 2].hlines(epsilon_neg, *g.axes[1, 2].get_xlim())
-
-
-# def plot_metrics2(df, n_arr, risk_best, epsilon_pos, epsilon_neg, row, col,
-#                   **kwargs):
-#     """Plot metrics for Task (1) simulations.
-
-#     Need to be able to accommodate either one or multiple settings of the epsilons.
-#     """
-#     xlim = (min(n_arr), max(n_arr))
-#     #     g = sns.FacetGrid(df, row = row, col = col,
-#     #                       col_order = ['risk', 'gap_FPR', 'gap_FNR'], xlim = xlim,
-#     #                      ylim = (0, 1), **kwargs)
-#     g = sns.FacetGrid(df, row=row, col=col,
-#                       col_order=['risk', 'gap_FPR', 'gap_FNR'], xlim=xlim,
-#                       **kwargs)
-#     g.map(sns.pointplot, 'n', 'value', order=n_arr, errorbar='sd')
-#     g.set_xticklabels(rotation=45)
-
-#     risk_best = to_iterable(risk_best)
-#     epsilon_pos = to_iterable(epsilon_pos)
-#     epsilon_neg = to_iterable(epsilon_neg)
-
-#     for i, rr in enumerate(risk_best):
-#         g.axes[i, 0].hlines(rr, *g.axes[i, 0].get_xlim())
-#         g.axes[i, 0].hlines(rr, *g.axes[i, 0].get_xlim())
-
-#     for i, ee in enumerate(epsilon_pos):
-#         g.axes[i, 1].hlines(ee, *g.axes[i, 1].get_xlim())
-#         g.axes[i, 1].hlines(ee, *g.axes[i, 1].get_xlim())
-
-#     for i, ee in enumerate(epsilon_neg):
-#         g.axes[i, 2].hlines(ee, *g.axes[i, 1].get_xlim())
-#         g.axes[i, 2].hlines(ee, *g.axes[i, 1].get_xlim())
-
-#     g.set_titles(template='')
-
-#     for ax, m in zip(g.axes[0, :], ['risk', 'gap_FPR', 'gap_FNR']):
-#         ax.set_title(m)
-#     for ax, l in zip(g.axes[:, 0], df[row].unique()):
-#         ax.set_ylabel(l, rotation=90, ha='center', va='center')
-
-#     return g
-
-
-def plot_metrics(df, row, col, row_order=None, col_order=None, centered=False, **kwargs):
-    """
-    Plot metrics with confidence intervals and reference lines from simulation results.
-
-    Args:
-        df (pd.DataFrame): DataFrame with columns: 'n', 'metric', 'value', optionally
-            'optimal_value', 'epsilon_pos', 'epsilon_neg'.
-        row (str): Variable to facet by row.
-        col (str): Variable to facet by column.
-        row_order (list): Order for rows.
-        col_order (list): Order for columns.
-        centered (bool): If True, draw horizontal reference lines at 0 (used when
-                    metrics are centered/scaled). If False, use actual values.
-        **kwargs: Passed to sns.FacetGrid.
-
-    Returns:
-        sns.FacetGrid
-    """
-    # Infer column and row orders if not given
-    col_order = col_order or sorted(df[col].dropna().unique())
-    row_order = row_order or sorted(df[row].dropna().unique())
-
-    # Facet grid
-    g = sns.FacetGrid(df, row=row, col=col,
-                      row_order=row_order, col_order=col_order,
-                      margin_titles=True, despine=False, **kwargs)
-
-    # Plotting points with error bars
-    g.map_dataframe(
-        sns.pointplot,
-        x='n', y='value', errorbar='sd',
-        order=sorted(df['n'].unique())
-    )
-
-    for ax in g.axes.flat:
-        for label in ax.get_xticklabels():
-            label.set_rotation(45)
-
-    # Add reference lines
-    if centered:  # If the values are centered and scaled, draw lines at 0
-        for ax in g.axes.flat:
-            ax.axhline(0, linestyle='--', color='gray', alpha=0.7)
-
-    else:         # Otherwise use the values from the optimal fair predictor
-        for (facet_row, facet_col), ax in g.axes_dict.items():
-            facet_df = df[(df[row] == facet_row) & (df[col] == facet_col)]
-
-            if facet_df.empty:
-                continue
-
-            if facet_col == 'gap_FPR':
-                ref_val = facet_df['epsilon_pos'].iloc[0]
-                ax.axhline(ref_val, ls='--', color='red', label='ε_pos')
-            elif facet_col == 'gap_FNR':
-                ref_val = facet_df['epsilon_neg'].iloc[0]
-                ax.axhline(ref_val, ls='--', color='red', label='ε_neg')
-            elif 'optimal_value' in facet_df.columns:
-                ref_val = facet_df['optimal_value'].iloc[0]
-                ax.axhline(ref_val, ls='--', color='gray', label='optimal')
-
-    g.set_titles(row_template='{row_name}', col_template='{col_name}')
-    g.tight_layout()
-
-    return g
-
-
-
-
-def plot_metrics2(df, row, col, row_order=None, col_order=None, **kwargs):
-    """
-    Plot simulation metrics across sample sizes with reference lines.
-
-    Args:
-        df (pd.DataFrame): DataFrame containing metric simulation results, including:
-            - 'n', 'value', 'metric', 'optimal_value'
-            - 'epsilon_pos', 'epsilon_neg' (for fairness gap metrics)
-        row (str): Variable to facet by row (e.g., 'setting').
-        col (str): Variable to facet by column (e.g., 'metric').
-        row_order (list, optional): Order for rows in the facet grid.
-        col_order (list, optional): Order for columns in the facet grid.
-        **kwargs: Additional arguments passed to `sns.FacetGrid`.
-
-    Returns:
-        sns.FacetGrid: The generated seaborn plot.
-    """
-    xlim = (df['n'].min(), df['n'].max())
-
-    g = sns.FacetGrid(df, row=row, col=col,
-                      row_order=row_order, col_order=col_order,
-                      xlim=xlim, margin_titles=True, **kwargs)
-
-    g.map(sns.pointplot, 'n', 'value', order=sorted(df['n'].unique()), errorbar='sd')
-    g.set_xticklabels(rotation=45)
-
-    # Add horizontal reference lines
-    for (r_val, c_val), ax in g.axes_dict.items():
-        metric_df = df[(df[row] == r_val) & (df[col] == c_val)]
-
-        if c_val == 'gap_FPR':
-            y_val = metric_df['epsilon_pos'].iloc[0]
-        elif c_val == 'gap_FNR':
-            y_val = metric_df['epsilon_neg'].iloc[0]
-        else:
-            y_val = metric_df['optimal_value'].iloc[0] if 'optimal_value' in metric_df else None
-
-        if y_val is not None:
-            ax.axhline(y=y_val, linestyle='--', color='gray')
-
-    # Optional: clean up facet titles
-    g.set_titles(template='{col_name}')
-
-    # Label row facets on y-axis
-    for r_val in df[row].unique():
-        ax = g.axes_dict[r_val, df[col].unique()[0]]
-        ax.set_ylabel(r_val, rotation=0, labelpad=30, ha='right', va='center')
-
-    return g
-
-
-def plot_metrics3(df, n_arr, risk_best, epsilon_pos, epsilon_neg, row, col,
-                  **kwargs):
-    """Plot metrics for Task (1) simulations.
-
-    Need to be able to accommodate either one or multiple settings of the epsilons.
-    """
-    xlim = (min(n_arr), max(n_arr))
-    #     g = sns.FacetGrid(df, row = row, col = col,
-    #                       col_order = ['risk', 'gap_FPR', 'gap_FNR'], xlim = xlim,
-    #                      ylim = (0, 1), **kwargs)
-    g = sns.FacetGrid(df, row=row, col=col,
-                      row_order=['risk', 'gap_FPR', 'gap_FNR'], xlim=xlim,
-                      **kwargs)
-    g.map(sns.pointplot, 'n', 'value', order=n_arr, errorbar='sd')
-    g.set_xticklabels(rotation=45)
-
-    risk_best = to_iterable(risk_best)
-    epsilon_pos = to_iterable(epsilon_pos)
-    epsilon_neg = to_iterable(epsilon_neg)
-
-    for i, rr in enumerate(risk_best):
-        g.axes[0, i].hlines(rr, *g.axes[0, i].get_xlim())
-        g.axes[0, i].hlines(rr, *g.axes[0, i].get_xlim())
-
-    for i, ee in enumerate(epsilon_pos):
-        g.axes[1, i].hlines(ee, *g.axes[1, i].get_xlim())
-        g.axes[1, i].hlines(ee, *g.axes[1, i].get_xlim())
-
-    for i, ee in enumerate(epsilon_neg):
-        g.axes[2, i].hlines(ee, *g.axes[2, i].get_xlim())
-        g.axes[2, i].hlines(ee, *g.axes[2, i].get_xlim())
-
-    g.set_titles(template='')
-    for ax, m in zip(g.axes[0, :], df[col].unique()):
-        ax.set_title(m)
-
-    return g
-
-
-def transform_metrics(res, scale=0.5):
-    """
-    Center and scale metric values using their respective reference values.
-
-    - For 'risk' and 'risk_change', uses the `optimal_value` column.
-    - For 'gap_FPR', uses `epsilon_pos`.
-    - For 'gap_FNR', uses `epsilon_neg`.
-
-    Args:
-        res (pd.DataFrame): Input long-format DataFrame with columns including
-                            'metric', 'value', 'optimal_value', 'epsilon_pos', 'epsilon_neg'.
-        scale (float): Exponent used in scaling (e.g., 0.5 for sqrt(n)).
-        id_vars (tuple): Columns to group by (usually 'mc_iter' and 'n').
-
-    Returns:
-        pd.DataFrame: DataFrame with centered and scaled 'value' column.
-    """
-    res = res.copy()
-    # Compute scaling factor per row
-    res['scaling'] = np.power(res['n'], scale)
-
-    # Center based on metric type
-    def center(row):
-        if row['metric'] == 'gap_FPR':
-            return row['value'] - row['epsilon_pos']
-        elif row['metric'] == 'gap_FNR':
-            return row['value'] - row['epsilon_neg']
-        else:
-            return row['value'] - row['optimal_value']
-
-    res['value'] = res.apply(center, axis=1) * res['scaling']
-    res = res.drop(columns=['scaling'])
-
-    return res
-
-
-def plot_metrics_est(df, metrics_pre, metrics_post, n_arr, row='scenario',
-                     col='metric', **kwargs):
-    """Plot metrics for Task (2) simulations.
-
-    Need to be able to accommodate either one or multiple settings of the epsilons.
-    """
-    risk_pre = metrics_pre.query("metric=='risk'")['value'].values[0]
-    risk_post = metrics_post.query("metric=='risk'")['value'].values[0]
-    risk_change = metrics_post.query("metric=='risk_change'")['value'].values[0]
-    gap_FPR = metrics_post.query("metric=='gap_FPR'")['value'].values[0]
-    gap_FNR = metrics_post.query("metric == 'gap_FNR'")['value'].values[0]
-
-    xlim = (min(n_arr), max(n_arr))
-    g = sns.FacetGrid(df, row=row, col=col,
-                      col_order=['risk', 'risk_change', 'gap_FPR', 'gap_FNR'],
-                      xlim=xlim, **kwargs)
-    g.map(sns.pointplot, 'n', 'value', order=n_arr, errorbar='sd')
-    g.set_xticklabels(rotation=45)
-
-    g.set_titles(template='')
-
-    for ax, m in zip(g.axes[0, :],
-                     ['risk', 'risk_change', 'gap_FPR', 'gap_FNR']):
-        ax.set_title(m)
-    for ax, l in zip(g.axes[:, 0], df[row].unique()):
-        ax.set_ylabel(l, rotation=90, ha='center', va='center')
-
-    for i in range(g.axes.shape[0]):
-        g.axes[i, 0].hlines(risk_post, *g.axes[i, 0].get_xlim())
-        g.axes[i, 1].hlines(risk_change, *g.axes[i, 1].get_xlim())
-        g.axes[i, 2].hlines(gap_FPR, *g.axes[i, 2].get_xlim())
-        g.axes[i, 3].hlines(gap_FNR, *g.axes[i, 3].get_xlim())
