@@ -2,10 +2,6 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-# TODO: fix missing functions, remove unneeded functions
-
-from counterfactualEO.utils import to_iterable
-
 
 def arr_to_df(coefs_noisy, n_arr, coefs_id):
     """Convert numpy array of noisy coefs to dataframe for plotting."""
@@ -145,18 +141,6 @@ def plot_metrics(df, row=None, col=None,
     return g
 
 
-# def combine_coefs(results, n_arr):
-#     """Combine LP coefficients from simulation output into a dataframe."""
-#     obj = pd.DataFrame(
-#         {'component': 'L2', 'n': n_arr, 'value': res['dist_obj'], 'id': 'obj'})
-
-#     coefs_noisy = pd.concat([
-#         to_df(results['obj_noisy'], n_arr, 'obj'),
-#         to_df(results['pos_noisy'], n_arr, 'pos'),
-#         to_df(results['neg_noisy'], n_arr, 'neg')
-#     ])
-
-
 def plot_noise(df, obj_true, pos_true, neg_true, errorbar='sd'):
     n_arr = sorted(df['n'].unique())
     xlim = (df['n'].min(), df['n'].max())
@@ -171,11 +155,9 @@ def plot_noise(df, obj_true, pos_true, neg_true, errorbar='sd'):
         ax.hlines(val, *ax.get_xlim(), color = 'red')
     for i, val in enumerate(pos_true):
         ax = g.axes[1, i]
-        # ax.hlines(0, *ax.get_xlim())
         ax.hlines(val, *ax.get_xlim(), color = 'red')
     for i, val in enumerate(neg_true):
         ax = g.axes[2, i]
-        # ax.hlines(0, *ax.get_xlim())
         ax.hlines(val, *ax.get_xlim(), color = 'red')
     for i in range(3):
         ax = g.axes[i, 4]
@@ -185,38 +167,3 @@ def plot_noise(df, obj_true, pos_true, neg_true, errorbar='sd'):
     g.tight_layout()
     
     return g
-
-
-# def plot_coefs(results):
-#     """Plot 'true' and noisy coefficients."""
-#     coefs_noisy = pd.concat([
-#         arr_to_df(results['obj_noisy'], n_arr, 'obj'),
-#         vec_to_df(results['dist_obj'], n_arr, 'obj'),
-#         arr_to_df(results['pos_noisy'], n_arr, 'pos'),
-#         vec_to_df(results['dist_pos'], n_arr, 'pos'),
-#         arr_to_df(results['neg_noisy'], n_arr, 'neg'),
-#         vec_to_df(results['dist_neg'], n_arr, 'neg')
-#     ])
-
-#     xlim = (min(n_arr), max(n_arr))
-#     ylim = (-1.1, 1.1)
-
-#     g = sns.FacetGrid(coefs_noisy, row = 'id', col = 'component', xlim = xlim,
-#                      ylim = ylim)
-#     g.map(sns.pointplot, 'n', 'value', order = n_arr)
-#     g.set_xticklabels(rotation = 45)
-
-#     for i, val in enumerate(results['obj_true']):
-#         ax = g.axes[0, i]
-#         ax.hlines(val, *ax.get_xlim())
-#     for i, val in enumerate(results['pos_true']):
-#         ax = g.axes[1, i]
-#         ax.hlines(0, *ax.get_xlim(), linestyle = '--', color = 'red')
-#         ax.hlines(val, *ax.get_xlim())
-#     for i, val in enumerate(results['neg_true']):
-#         ax = g.axes[2, i]
-#         ax.hlines(0, *ax.get_xlim(), linestyle = '--', color = 'red')
-#         ax.hlines(val, *ax.get_xlim())
-
-
-
