@@ -135,8 +135,9 @@ def plot_metrics(df, row=None, col=None,
                 ref_val = facet_df[reference_col].iloc[0]
                 ax.axhline(ref_val, ls='--', color='gray', label='reference')
 
+    for ax in g.axes.flat:
+        ax.margins(y=0.35)  # Set 35% vertical padding
     g.set_titles(row_template='{row_name}', col_template='{col_name}')
-    g.tight_layout()
 
     return g
 
