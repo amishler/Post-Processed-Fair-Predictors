@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 
 from counterfactualEO.functions_evaluation import (
+    ci_prob,
+    ci_prob_diff,
     est_risk_post,
     est_predictive_change,
     est_cFPR_post,
@@ -11,6 +13,60 @@ from counterfactualEO.functions_evaluation import (
     metrics_post,
     coverage
 )
+
+
+## Testing ci_prob function
+
+def test_ci_prob_expit():
+    lower, upper = ci_prob(est=0.6, sd=0.1, z=1.96, n=100, scale='expit')
+    assert 0 <= lower <= upper <= 1
+    assert np.isclose(upper - lower, 2 * 1.96 * 0.1 / np.sqrt(100), atol=1e-4)
+
+def test_ci_prob_logit_center():
+    lower, upper = ci_prob(est=0.5, sd=0.1, z=1.96, n=100, scale='logit')
+    assert 0 <= lower < 0.5 < upper <= 1
+
+def test_ci_prob_logit_matches_expit_center():
+    # For est=0.5 and small sd, the logit CI should be symmetric around 0.5
+    l_logit, u_logit = ci_prob(est=0.5, sd=0.05, z=1.96, n=100, scale='logit')
+    assert np.isclose(u_logit - 0.5, 0.5 - l_logit, atol=1e-5)
+
+def test_ci_prob_extreme_estimates():
+    for est in [0.01, 0.99]:
+        lower, upper = ci_prob(est=est, sd=0.05, z=1.96, n=100, scale='logit')
+        assert 0 <= lower <= upper <= 1
+
+def test_ci_prob_monotonicity():
+    # CI should be wider for higher z-score
+    l1, u1 = ci_prob(0.5, 0.1, z=1.0, n=100, scale='expit')
+    l2, u2 = ci_prob(0.5, 0.1, z=2.0, n=100, scale='expit')
+    assert (u2 - l2) > (u1 - l1)
+
+
+## Testing ci_prob_diff function
+
+def test_ci_prob_diff_expit():
+    lower, upper = ci_prob_diff(est=0.2, sd=0.1, z=1.96, n=100, scale='expit')
+    assert -1 <= lower <= upper <= 1
+    assert np.isclose(upper - lower, 2 * 1.96 * 0.1 / np.sqrt(100), atol=1e-4)
+
+def test_ci_prob_diff_logit_center():
+    lower, upper = ci_prob_diff(est=0.0, sd=0.1, z=1.96, n=100, scale='logit')
+    assert -1 <= lower < 0 < upper <= 1
+
+def test_ci_prob_diff_logit_matches_expit_center():
+    l_logit, u_logit = ci_prob_diff(est=0.0, sd=0.05, z=1.96, n=100, scale='logit')
+    assert np.isclose(u_logit - 0.0, 0.0 - l_logit, atol=1e-5)
+
+def test_ci_prob_diff_extreme_estimates():
+    for est in [-0.98, 0.98]:
+        lower, upper = ci_prob_diff(est=est, sd=0.05, z=1.96, n=100, scale='logit')
+        assert -1 <= lower <= upper <= 1
+
+def test_ci_prob_diff_monotonicity():
+    l1, u1 = ci_prob_diff(0.3, 0.1, z=1.0, n=100, scale='expit')
+    l2, u2 = ci_prob_diff(0.3, 0.1, z=2.0, n=100, scale='expit')
+    assert (u2 - l2) > (u1 - l1)
 
 
 @pytest.mark.parametrize("ci_scale", ['expit', 'logit'])

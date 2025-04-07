@@ -34,27 +34,31 @@ def indicator_df(df, A='A', R='R'):
 
 
 def ci_prob(est, sd, z, n, scale='logit'):
-    """Compute a CI around a probability estimate, either on the expit or the 
-    logit scale.
+    """Compute a confidence interval around a probability estimate, 
+    either on the expit (probability) or the logit (log-odds) scale.
 
     Args:
-        est (float): Point estimate in [0, 1].
-        sd (float): Standard deviation of the estimate.
-        z (float): Z-score for desired confidence level.
-        n (int): Sample size.
-        scale (str): Either 'logit' (for CI in logit space) or 'expit' 
-            (for CI in [0, 1]).
+        est (float): Point estimate in (0, 1).
+        sd (float): Standard deviation of the estimate (on probability scale).
+        z (float): Z-score for desired confidence level (e.g., 1.96 for 95% CI).
+        n (int): Sample size (used in standard error calculation).
+        scale (str): 'logit' or 'expit'.
 
     Returns:
-        (float, float): Lower and upper confidence bounds.
+        (float, float): Lower and upper confidence bounds (on probability scale).
     """
-    if (scale == 'logit') and (0 < est < 1):
-        sd = sd/(est*(1 - est))
-        lower = expit(logit(est) - z*sd/np.sqrt(n))
-        upper = expit(logit(est) + z*sd/np.sqrt(n))
+    se = sd / np.sqrt(n)
+
+    if scale == 'logit' and 0 < est < 1:
+        # Apply delta method to get SE on logit scale
+        se_logit = se / (est * (1 - est))
+        logit_est = logit(est)
+        lower = expit(logit_est - z * se_logit)
+        upper = expit(logit_est + z * se_logit)
     else:
-        lower = max(0, est - z * sd / np.sqrt(n))
-        upper = min(est + z * sd / np.sqrt(n), 1)
+        # Use normal CI on probability scale and clip to [0,1]
+        lower = max(0, est - z * se)
+        upper = min(1, est + z * se)
 
     return lower, upper
 
@@ -65,22 +69,34 @@ def ci_prob_diff(est, sd, z, n, scale='logit'):
 
     Args:
         est (float): Difference estimate in [-1, 1].
-        sd (float): Standard deviation of the difference.
+        sd (float): Standard deviation of the difference (on prob scale).
         z (float): Z-score for CI.
         n (int): Sample size.
-        scale (str): Either 'logit' (for CI in logit space) or 'expit' 
-            (for CI in [0, 1]).
+        scale (str): 'logit' (transform scale) or 'expit' (probability scale).
 
     Returns:
         (float, float): CI bounds for the probability difference.
     """
-    if (scale == 'logit') and (-1 < est < 1):
-        sd = sd*2/(1 - est**2)
-        lower = 2*(expit(logit(est/2 + 1/2) - z * sd / np.sqrt(n)) - 1/2)
-        upper = 2*(expit(logit(est/2 + 1/2) + z * sd / np.sqrt(n)) - 1/2)
+    se = sd / np.sqrt(n)
+
+    if scale == 'logit' and -1 < est < 1:
+        # Map est ∈ [-1, 1] to pseudo-probability q ∈ [0, 1]
+        q = est / 2 + 0.5
+
+        # Delta method: derivative of logit(q) w.r.t. est is 1 / [2 * q * (1 - q)]
+        dq_dest = 0.5
+        se_logit = se * dq_dest / (q * (1 - q))
+
+        # CI on logit scale, back-transform
+        lower_q = expit(logit(q) - z * se_logit)
+        upper_q = expit(logit(q) + z * se_logit)
+
+        # Map back to [-1, 1]
+        lower = 2 * (lower_q - 0.5)
+        upper = 2 * (upper_q - 0.5)
     else:
-        lower = max(-1, est - z * sd / np.sqrt(n))
-        upper = min(est + z * sd / np.sqrt(n), 1)
+        lower = max(-1, est - z * se)
+        upper = min(1, est + z * se)
 
     return lower, upper
 
