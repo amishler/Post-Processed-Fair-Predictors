@@ -2,6 +2,7 @@ import pytest
 
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import LogisticRegression
 
 from counterfactualEO.functions_evaluation import (
     ci_prob,
@@ -10,7 +11,8 @@ from counterfactualEO.functions_evaluation import (
     est_predictive_change,
     est_cFPR_post,
     est_cFNR_post,
-    metrics_post,
+    metrics_post_simple,
+    metrics_post_crossfit,
     coverage
 )
 
@@ -96,17 +98,86 @@ def test_est_cFNR_post(real_data, ci_scale):
     pd.testing.assert_frame_equal(result, expected)
 
 
-def test_metrics_post_structure(real_data):
+def test_metrics_post_simple_structure(real_data):
     df, testdict = real_data
     theta = testdict['theta']
-    result = metrics_post(theta, df, outcome='phihat', ci=0.95)
+    result = metrics_post_simple(theta, df, outcome='phihat', ci=0.95)
     assert isinstance(result, pd.DataFrame)
     assert {'metric', 'value', 'ci_lower', 'ci_upper'}.issubset(result.columns)
 
 
+def test_metrics_post_crossfit_output(mock_data):
+    theta = np.array([0.2, 0.3, 0.4, 0.5])
+    X = ['X1', 'X2']
+    model = LogisticRegression()
+
+    result = metrics_post_crossfit(
+        theta=theta,
+        data=mock_data,
+        A='A',
+        X=X,
+        R='R',
+        D='D',
+        Y='Y',
+        learner_pi=model,
+        learner_mu=model,
+        outcome='phihat',
+        ci=0.95,
+        ci_scale='logit',
+        n_splits=2,
+        random_state=42
+    )
+
+    assert isinstance(result, pd.DataFrame)
+    assert set(result.columns) >= {'metric', 'value', 'ci_lower', 'ci_upper'}
+
+    expected_metrics = {
+        'risk', 'risk_change',
+        'FPR0', 'FPR1', 'gap_FPR',
+        'FNR0', 'FNR1', 'gap_FNR',
+        'pred_change'
+    }
+    assert set(result['metric']) == expected_metrics
+
+    # Metrics that can lie in [-1, 1]
+    unbounded_metrics = {'risk_change', 'pred_change', 'gap_FPR', 'gap_FNR'}
+
+    # Range checks based on metric type
+    for _, row in result.iterrows():
+        metric = row['metric']
+        for col in ['value', 'ci_lower', 'ci_upper']:
+            val = row[col]
+            if pd.isna(val):
+                continue
+            if metric in unbounded_metrics:
+                assert -1 <= val <= 1, f"{metric} - {col} out of [-1, 1]: {val}"
+            else:
+                assert 0 <= val <= 1, f"{metric} - {col} out of [0, 1]: {val}"
+
+
+def test_metrics_post_crossfit_invalid_n_splits(mock_data):
+    theta = np.array([0.2, 0.3, 0.4, 0.5])
+    X = ['X1', 'X2']
+    model = LogisticRegression()
+
+    with pytest.raises(ValueError):
+        metrics_post_crossfit(
+            theta=theta,
+            data=mock_data,
+            A='A',
+            X=X,
+            R='R',
+            D='D',
+            Y='Y',
+            learner_pi=model,
+            learner_mu=model,
+            n_splits=1,  # invalid, must be at least 2
+        )
+
+
 def test_coverage_structure(real_data):
     df, testdict = real_data
-    metrics_est = metrics_post(testdict['theta'], df, outcome='phihat', ci=0.95)
+    metrics_est = metrics_post_simple(testdict['theta'], df, outcome='phihat', ci=0.95)
     cov_df = coverage(metrics_est, testdict['risk_df'], simplify=False)
     assert isinstance(cov_df, pd.DataFrame)
 
@@ -128,7 +199,7 @@ def test_est_predictive_change_output_structure(mock_data, ci):
     assert isinstance(result, pd.DataFrame)
     assert result.shape == (1, 4)
     assert set(result.columns) == {'metric', 'value', 'ci_lower', 'ci_upper'}
-    assert result.loc[0, 'metric'] == 'prop_differ'
+    assert result.loc[0, 'metric'] == 'pred_change'
 
 def test_est_predictive_change_values_in_range(mock_data):
     theta = np.array([0.2, 0.3, 0.4, 0.5])
