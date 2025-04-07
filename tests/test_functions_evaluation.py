@@ -23,7 +23,7 @@ def test_est_risk(real_data, ci_scale):
 
 
 @pytest.mark.parametrize("ci_scale", ['expit', 'logit'])
-def test_est_cFPR_group(real_data, ci_scale):
+def test_est_cFPR_post(real_data, ci_scale):
     df, testdict = real_data
     theta = testdict['theta']
     result = est_cFPR_post(theta, df, outcome='phihat', ci=0.95, ci_scale=ci_scale)
@@ -32,7 +32,7 @@ def test_est_cFPR_group(real_data, ci_scale):
 
 
 @pytest.mark.parametrize("ci_scale", ['expit', 'logit'])
-def test_est_cFNR_group(real_data, ci_scale):
+def test_est_cFNR_post(real_data, ci_scale):
     df, testdict = real_data
     theta = testdict['theta']
     result = est_cFNR_post(theta, df, outcome='phihat', ci=0.95, ci_scale=ci_scale)
@@ -40,7 +40,7 @@ def test_est_cFNR_group(real_data, ci_scale):
     pd.testing.assert_frame_equal(result, expected)
 
 
-def test_metrics_structure(real_data):
+def test_metrics_post_structure(real_data):
     df, testdict = real_data
     theta = testdict['theta']
     result = metrics_post(theta, df, outcome='phihat', ci=0.95)
