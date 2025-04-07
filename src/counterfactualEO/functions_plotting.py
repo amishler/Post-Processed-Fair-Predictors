@@ -54,30 +54,36 @@ def transform_metrics(res, reference_col, scale=0.5):
     return res
 
 
-def plot_metrics(df, row=None, col=None,
+def plot_metrics(df, x, y='value', row=None, col=None,
                  row_order=None, col_order=None,
-                 reference_col=None, centered=False, **kwargs):
+                 reference_col=None, centered=False,
+                 draw_custom_errorbars=False, max_ticks=6,
+                 categorical_x=True, **kwargs):
     """
     Plot metrics with confidence intervals and reference lines from simulation results.
 
     Args:
-        df (pd.DataFrame): DataFrame with columns: 'n', 'metric', 'value', optionally
-                           reference_col, 'epsilon_pos', 'epsilon_neg'.
+        df (pd.DataFrame): DataFrame with plotting columns and optional confidence intervals.
+        x (str): Column for x-axis.
+        y (str): Column for y-axis. Defaults to 'value'.
         row (str or None): Variable to facet by row.
         col (str or None): Variable to facet by column.
         row_order (list): Order for rows.
         col_order (list): Order for columns.
         reference_col (str or None): Column to use for reference horizontal line.
         centered (bool): If True, draw horizontal reference lines at 0.
+        draw_custom_errorbars (bool): If True, draw asymmetric error bars from ci_lower / ci_upper.
+        max_ticks (int): Max number of x-tick labels to show.
+        categorical_x (bool): Whether x-axis should be treated as categorical (uses pointplot vs lineplot).
         **kwargs: Passed to sns.FacetGrid.
 
     Returns:
         sns.FacetGrid
     """
-    # Treat 'n' as categorical
-    n_arr = sorted(df['n'].unique())
+    if categorical_x:
+        x_order = sorted(df[x].unique())
 
-    # Handle facet grid setup
+    # Setup FacetGrid
     facet_kws = dict()
     if row:
         facet_kws['row'] = row
@@ -89,11 +95,59 @@ def plot_metrics(df, row=None, col=None,
             facet_kws['col_order'] = col_order
 
     g = sns.FacetGrid(df, margin_titles=True, despine=False, sharey=False, **facet_kws, **kwargs)
-    g.map_dataframe(sns.pointplot, x='n', y='value', errorbar='sd', order=n_arr)
 
+    # Choose plotting function
+    if draw_custom_errorbars:
+        if categorical_x:
+            g.map_dataframe(sns.pointplot, x=x, y=y, errorbar=None, order=x_order)
+        else:
+            g.map_dataframe(sns.lineplot, x=x, y=y, errorbar=None, marker='o', linewidth=2)
+    else:
+        if categorical_x:
+            g.map_dataframe(sns.pointplot, x=x, y=y, errorbar='sd', order=x_order)
+        else:
+            g.map_dataframe(sns.lineplot, x=x, y=y, errorbar='sd', marker='o', linewidth=2)
+
+    # Add manual error bars
+    if draw_custom_errorbars:
+        for ax, key in zip(g.axes.flat, g.col_names if col else g.row_names if row else [None]):
+            sub_df = df.copy()
+
+            if row and col:
+                facet_row, facet_col = key
+                sub_df = sub_df[(sub_df[row] == facet_row) & (sub_df[col] == facet_col)]
+            elif row:
+                sub_df = sub_df[sub_df[row] == key]
+            elif col:
+                sub_df = sub_df[sub_df[col] == key]
+
+            if categorical_x:
+                for i, val in enumerate(x_order):
+                    point = sub_df[sub_df[x] == val]
+                    if not point.empty:
+                        y_val = point[y].values[0]
+                        yerr_lower = y_val - point['ci_lower'].values[0]
+                        yerr_upper = point['ci_upper'].values[0] - y_val
+                        ax.errorbar(i, y_val, yerr=[[yerr_lower], [yerr_upper]],
+                                    fmt='none', capsize=0, linewidth=2)
+            else:
+                for _, row_data in sub_df.iterrows():
+                    x_val = row_data[x]
+                    y_val = row_data[y]
+                    yerr_lower = y_val - row_data['ci_lower']
+                    yerr_upper = row_data['ci_upper'] - y_val
+                    ax.errorbar(x_val, y_val, yerr=[[yerr_lower], [yerr_upper]],
+                                fmt='none', capsize=0, linewidth=2)
+
+    # Format x-axis ticks
     for ax in g.axes.flat:
-        ax.set_xticks(range(len(n_arr)))
-        ax.set_xticklabels(n_arr, rotation=45)
+        if categorical_x:
+            skip = max(1, len(x_order) // max_ticks)
+            shown_ticks = x_order[::skip]
+            ax.set_xticks([x_order.index(val) for val in shown_ticks])
+            ax.set_xticklabels([f"{val:.2f}" if isinstance(val, float) else str(val) for val in shown_ticks])
+        else:
+            ax.tick_params(axis='x', labelrotation=0)
 
     # Draw reference lines
     for key, ax in g.axes_dict.items():
@@ -102,7 +156,6 @@ def plot_metrics(df, row=None, col=None,
         else:
             facet_row, facet_col = (key, None) if row else (None, key)
 
-        m = facet_col or facet_row or df['metric'].unique()[0]
         facet_df = df.copy()
         if row and facet_row is not None:
             facet_df = facet_df[facet_df[row] == facet_row]
@@ -114,29 +167,12 @@ def plot_metrics(df, row=None, col=None,
 
         if centered:
             ax.axhline(0, ls='--', color='gray', alpha=0.7)
-        else:
-            if m == 'gap_FPR':
-                if 'epsilon_pos' in facet_df.columns:
-                    ref_val = facet_df['epsilon_pos'].iloc[0]
-                elif reference_col in facet_df.columns:
-                    ref_val = facet_df[reference_col].iloc[0]
-                else:
-                    ref_val = 0
-                ax.axhline(ref_val, ls='--', color='gray', label='ε_pos')
-            elif m == 'gap_FNR':
-                if 'epsilon_neg' in facet_df.columns:
-                    ref_val = facet_df['epsilon_neg'].iloc[0]
-                elif reference_col in facet_df.columns:
-                    ref_val = facet_df[reference_col].iloc[0]
-                else:
-                    ref_val = 0
-                ax.axhline(ref_val, ls='--', color='gray', label='ε_neg')
-            elif reference_col in facet_df.columns:
-                ref_val = facet_df[reference_col].iloc[0]
-                ax.axhline(ref_val, ls='--', color='gray', label='reference')
+        elif reference_col and reference_col in facet_df.columns:
+            ref_val = facet_df[reference_col].iloc[0]
+            ax.axhline(ref_val, ls='--', color='gray', label='reference')
 
     for ax in g.axes.flat:
-        ax.margins(y=0.35)  # Set 35% vertical padding
+        ax.margins(y=0.35)
     g.set_titles(row_template='{row_name}', col_template='{col_name}')
 
     return g
