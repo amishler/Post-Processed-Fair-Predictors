@@ -29,7 +29,9 @@ from tqdm import tqdm
 from counterfactualEO.functions_estimation import (
     optimize, risk_coefs, fairness_coefs
 )
-from counterfactualEO.functions_evaluation import metrics_post_simple
+from counterfactualEO.functions_evaluation import (
+    metrics_post_simple,
+)
 
 
 def generate_data_pre(n, prob_A, beta_X, beta_D, beta_Y0, beta_Y1,
@@ -671,42 +673,3 @@ def simulate_performance_tradeoff(
     )
 
     return pd.concat(results, ignore_index=True)
-
-
-def add_reference_values(metrics_df, reference_values_df, value_col='value', new_col='reference_value'):
-    """
-    Merge metrics for a given theta-hat with corresponding reference metric values.
-
-    In general, the reference metrics will be either (1) the values of the
-    optimal fair predictor (for task 1) or the "true" values from the oracle (for task 2).
-
-    Args:
-        metrics_df (pd.DataFrame): Long-format DataFrame with simulation results.
-            Must include a 'metric' column.
-        reference_values_df (pd.DataFrame): DataFrame containing metrics for the
-            optimal fair predictor, containing a 'metric' column and a column 
-            (default 'value') to merge.
-        value_col (str): Name of the column in `optimal_values_df` containing the
-            values to be added to `metrics_df`.
-        new_col (str): Name of the column to be added to `metrics_df` after the merge.
-
-    Returns:
-        pd.DataFrame: `metrics_df` with a new column `new_col` representing true values.
-
-    Raises:
-        ValueError: If required columns are missing.
-    """
-    required_cols = {'metric', value_col}
-    if not required_cols.issubset(reference_values_df.columns):
-        raise ValueError(f"`reference_values_df` must contain columns: {required_cols}")
-
-    if 'metric' not in metrics_df.columns:
-        raise ValueError("`metrics_df` must contain a 'metric' column for merging.")
-
-    merged = metrics_df.merge(
-        reference_values_df[['metric', value_col]].rename(columns={value_col: new_col}),
-        on='metric',
-        how='left'
-    )
-
-    return merged
