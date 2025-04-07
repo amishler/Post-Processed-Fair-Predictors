@@ -9,9 +9,12 @@ import numpy as np
 import pandas as pd
 import scipy
 from scipy.special import expit, logit
+from sklearn.model_selection import KFold
 
-from counterfactualEO.functions_estimation import fairness_coefs
-
+from counterfactualEO.functions_estimation import (
+    train_nuisance,
+    fairness_coefs
+)
 
 def indicator_df(df, A='A', R='R'):
     """
@@ -288,18 +291,27 @@ def est_predictive_change(theta, data, A='A', R='R', ci=0.95, ci_scale='logit'):
     return out
 
 
-def metrics_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci_scale='logit'):
+def metrics_post_simple(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci_scale='logit'):
     """
-    Compute risk, FPR, and FNR metrics for a given post-processed aka derived
-    predictor.
+    Estimate risk, FPR, and FNR metrics for a given post-processed aka derived
+    predictor. This function is "simple" in the sense that it assumes that
+    appropriately computed outcomes are already available in the data. This
+    would hold for example if a separately fitted nuisance model was used to compute
+    the pseudo-outcomes (like phihat, muhat0, etc.) and they are already in the `data`.
+    Or if the outcomes are available because they have been simulated rather than estimated.
+    For use on actual data, users should instead use `metrics_post_crossfit` to 
+    ensure proper cross-fitting of nuisance models.
 
     Args:
         theta (np.ndarray): 4-element vector indexing the post-processed
             predictor.
         data (pd.DataFrame): Evaluation dataset.
         A, R (str): Sensitive attribute and risk score column names.
-        outcome (str): Column with estimated or true outcome. Could be 'Y0', 
-          'phihat', 'muhat0', or 'mu0' for example.
+        outcome (str): Column with estimated or true outcome. Conceptually,
+            should be one of Y0 (the true outcome, in simulated settings where
+            that's known), phihat (the doubly robust pseudo-outcomes, for
+            doubly robust metrics estimation), or muhat0 (the estimated
+            regression outcome, for a plugin estimator).
         ci (float): Confidence level for intervals.
         ci_scale (str): CI transformation scale.
 
@@ -314,6 +326,54 @@ def metrics_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci_scale=
 
     return out
 
+
+def metrics_post_crossfit(theta, data, A, X, R, D, Y, learner_pi, learner_mu,
+                          outcome='phihat', ci=0.95, ci_scale='logit',
+                          n_splits=2, trunc_pi=0.975, random_state=None):
+    """
+    Cross-fitted estimation of fairness metrics for a post-processed aka derived
+    predictor.
+
+    Args:
+        theta (np.ndarray): 4-element vector for post-processed predictor.
+        data (pd.DataFrame): Raw data with features and outcomes.
+        A, X, R, D, Y (str or list): Column names for sensitive feature, 
+            features, risk score, decision, and outcome.
+        learner_pi, learner_mu: Models for propensity and outcome.
+        outcome (str): Name of pseudo-outcome column to compute metrics on 
+            (e.g., 'phihat', 'muhat0', 'mu0').
+        ci (float): Confidence level for intervals.
+        ci_scale (str): CI transformation scale.
+        n_splits (int): Number of cross-fitting folds.
+        trunc_pi (float): Truncation level for propensity score.
+        random_state (int or None): Random seed.
+
+    Returns:
+        pd.DataFrame: Combined metrics with confidence intervals.
+    """ 
+    kf = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    data = data.reset_index(drop=True)
+    pooled_parts = []
+
+    for train_idx, test_idx in kf.split(data):
+        data_train = data.iloc[train_idx].copy()
+        data_test = data.iloc[test_idx].copy()
+
+        nuis = train_nuisance(data_train, data_test, A, X, R, D, Y,
+                              learner_pi, learner_mu, trunc_pi)
+        data_test = pd.concat([data_test.reset_index(drop=True),
+                               nuis.reset_index(drop=True)], axis=1)
+        pooled_parts.append(data_test)
+
+    pooled_data = pd.concat(pooled_parts, axis=0).reset_index(drop=True)
+
+    risk = est_risk_post(theta, pooled_data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
+    cFPR = est_cFPR_post(theta, pooled_data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
+    cFNR = est_cFNR_post(theta, pooled_data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
+    predictive_change = est_predictive_change(theta, pooled_data, A=A, R=R, ci=ci, ci_scale=ci_scale)
+
+    return pd.concat([risk, cFPR, cFNR, predictive_change], ignore_index=True)
+    
 
 def coverage(metrics_est, metrics_true, simplify=True):
     """
