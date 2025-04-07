@@ -253,7 +253,7 @@ def est_cFNR_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
     return pd.DataFrame(out)
 
 
-def est_predictive_change(theta, data, A='A', R='R', ci=0.95):
+def est_predictive_change(theta, data, A='A', R='R', ci=0.95, ci_scale='logit'):
     """
     Estimate the predictive change due to post-processing, defined as the 
     probability that the derived predictions differ from the original 
@@ -269,22 +269,21 @@ def est_predictive_change(theta, data, A='A', R='R', ci=0.95):
             computed.
     
     Returns:
-        pd.DataFrame: A single row DataFrame with the metric 'prop_differ', its 
+        pd.DataFrame: A single row DataFrame with the metric 'pred_change', its 
             point estimate, and optional confidence intervals.
     """
     ind_df = indicator_df(data, A, R).astype(int)
     newvar = ind_df.dot([theta[0], 1 - theta[1], theta[2], 1 - theta[3]])
     diff_est = newvar.mean()       
-    out = pd.DataFrame({'metric': 'prop_differ', 'value': diff_est, 
+    out = pd.DataFrame({'metric': 'pred_change', 'value': diff_est, 
                        'ci_lower': None, 'ci_upper': None}, index = [0])
     if ci:    
         n = data.shape[0]
         z = scipy.stats.norm.ppf((ci + 1) / 2)
         diff_sd = np.std(newvar)
-        ci_lower = diff_est - z*diff_sd/np.sqrt(n)
-        ci_upper = diff_est + z*diff_sd/np.sqrt(n)
-        out['ci_lower'] = np.max([ci_lower, 0])
-        out['ci_upper'] = np.min([ci_upper, 1])
+        lower_change, upper_change = ci_prob(diff_est, diff_sd, z, n, ci_scale)
+        out['ci_lower'] = lower_change
+        out['ci_upper'] = upper_change
     
     return out
 
@@ -310,7 +309,8 @@ def metrics_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci_scale=
     risk = est_risk_post(theta, data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
     cFPR = est_cFPR_post(theta, data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
     cFNR = est_cFNR_post(theta, data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
-    out = pd.concat([risk, cFPR, cFNR])
+    predictive_change = est_predictive_change(theta, data, A=A, R=R, ci=ci, ci_scale=ci_scale)
+    out = pd.concat([risk, cFPR, cFNR, predictive_change], ignore_index=True)
 
     return out
 
