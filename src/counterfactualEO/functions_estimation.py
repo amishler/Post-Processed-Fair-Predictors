@@ -264,6 +264,11 @@ def optimize(risk_coefs_, coefs_pos, coefs_neg, epsilon_pos, epsilon_neg):
 def fair_derived_split(data, A, X, R, D, Y, learner_pi, learner_mu, epsilon_pos,
                  epsilon_neg, outcome='phihat', test_size=0.50, trunc_pi=0.975):
     """Optimization with chosen estimators for loss and fairness constraints.
+
+    This function splits the data into one old for estimating the nuisance
+    parameters and one fold for estimating theta, the optimal decision variable that
+    indexes the fair predictor. This is a convenience function for users who want to
+    perform a single round of optimization without cross-fitting.
     
     Args:
         data: DataFrame containing columns A, X, R, D, Y.
@@ -310,6 +315,12 @@ def fair_derived_crossfit(data, A, X, R, D, Y, learner_pi, learner_mu,
                           n_splits=2, estimator_type='pooled',
                           trunc_pi=0.975, random_state=None):
     """Cross-fitted estimation with chosen estimators for loss and fairness constraints.
+
+    This function performs cross-fitting to estimate the optimal decision variable theta
+    that indexes the fair predictor. This is the recommended way to estimate theta;
+    the function `fair_derived_split` is provided for convenience but has
+    higher variance due to the single split.
+
 
     Args:
         data: DataFrame with columns A, X, R, D, Y.
