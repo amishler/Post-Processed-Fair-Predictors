@@ -5,14 +5,10 @@ This module provides tools to evaluate post-processed fair predictors.
 This includes estimation of risk and fairness metrics with influence 
 function-based asymptotically valid confidence intervals.
 """
-
-from joblib import Parallel, delayed
 import numpy as np
 import pandas as pd
 import scipy
 from scipy.special import expit, logit
-
-from tqdm import tqdm
 
 from counterfactualEO.functions_estimation import fairness_coefs
 
@@ -134,42 +130,6 @@ def est_risk_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
     return pd.DataFrame(out)
 
 
-def est_predictive_change(theta, data, A='A', R='R', ci=0.95):
-    """
-    Estimate the predictive change due to post-processing, defined as the 
-    probability that the derived predictions differ from the original 
-    predictions.
-
-    Args:
-        theta (np.ndarray): 4-element vector indexing the post-processed
-            predictor.
-        data (pd.DataFrame): Evaluation data.
-        A, R, outcome (str): Column names for the sensitive feature and the
-            input predictor.
-        ci (float): Confidence level, or None in which case no CI will be
-            computed.
-    
-    Returns:
-        pd.DataFrame: A single row DataFrame with the metric 'prop_differ', its 
-            point estimate, and optional confidence intervals.
-    """
-    ind_df = indicator_df(data, A, R).astype(int)
-    newvar = ind_df.dot([theta[0], 1 - theta[1], theta[2], 1 - theta[3]])
-    diff_est = newvar.mean()       
-    out = pd.DataFrame({'metric': 'prop_differ', 'value': diff_est, 
-                       'ci_lower': None, 'ci_upper': None}, index = [0])
-    if ci:    
-        n = data.shape[0]
-        z = scipy.stats.norm.ppf((ci + 1) / 2)
-        diff_sd = np.std(newvar)
-        ci_lower = diff_est - z*diff_sd/np.sqrt(n)
-        ci_upper = diff_est + z*diff_sd/np.sqrt(n)
-        out['ci_lower'] = np.max([ci_lower, 0])
-        out['ci_upper'] = np.min([ci_upper, 1])
-    
-    return out
-
-
 def est_cFPR_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
              ci_scale='logit'):
     """
@@ -277,6 +237,42 @@ def est_cFNR_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
     return pd.DataFrame(out)
 
 
+def est_predictive_change(theta, data, A='A', R='R', ci=0.95):
+    """
+    Estimate the predictive change due to post-processing, defined as the 
+    probability that the derived predictions differ from the original 
+    predictions.
+
+    Args:
+        theta (np.ndarray): 4-element vector indexing the post-processed
+            predictor.
+        data (pd.DataFrame): Evaluation data.
+        A, R, outcome (str): Column names for the sensitive feature and the
+            input predictor.
+        ci (float): Confidence level, or None in which case no CI will be
+            computed.
+    
+    Returns:
+        pd.DataFrame: A single row DataFrame with the metric 'prop_differ', its 
+            point estimate, and optional confidence intervals.
+    """
+    ind_df = indicator_df(data, A, R).astype(int)
+    newvar = ind_df.dot([theta[0], 1 - theta[1], theta[2], 1 - theta[3]])
+    diff_est = newvar.mean()       
+    out = pd.DataFrame({'metric': 'prop_differ', 'value': diff_est, 
+                       'ci_lower': None, 'ci_upper': None}, index = [0])
+    if ci:    
+        n = data.shape[0]
+        z = scipy.stats.norm.ppf((ci + 1) / 2)
+        diff_sd = np.std(newvar)
+        ci_lower = diff_est - z*diff_sd/np.sqrt(n)
+        ci_upper = diff_est + z*diff_sd/np.sqrt(n)
+        out['ci_lower'] = np.max([ci_lower, 0])
+        out['ci_upper'] = np.min([ci_upper, 1])
+    
+    return out
+
+
 def metrics_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci_scale='logit'):
     """
     Compute risk, FPR, and FNR metrics for a given post-processed aka derived
@@ -301,53 +297,6 @@ def metrics_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci_scale=
     out = pd.concat([risk, cFPR, cFNR])
 
     return out
-
-
-def _eval_one_theta(n_val, mc_iter, theta_row, epsilon_pos, epsilon_neg, data_val, ci):
-    """
-    Evaluate a single theta and return its metrics as a DataFrame row.
-    """
-    df = metrics_post(theta_row, data_val, A='A', R='R', outcome='mu0', ci=ci)
-    df.insert(0, 'mc_iter', mc_iter)
-    df.insert(0, 'n', n_val)
-    df.insert(0, 'epsilon_neg', epsilon_neg)
-    df.insert(0, 'epsilon_pos', epsilon_pos)
-    return df
-
-
-def metrics_to_df(res, n_arr, setting, data_val, ci=0.95, n_jobs=-1):
-    """
-    Fully parallelized version: evaluates metrics for each theta separately.
-
-    Args:
-        res (list): List of sim_theta outputs (each with 'theta_arr', 'epsilon_pos', 'epsilon_neg').
-        n_arr (list): Corresponding sample sizes.
-        setting (str): Experiment label to tag results.
-        data_val (pd.DataFrame): Validation data for evaluation.
-        ci (float): Confidence interval level.
-        n_jobs (int): Number of parallel jobs (-1 = all cores).
-
-    Returns:
-        pd.DataFrame: Combined long-format metrics with confidence intervals.
-    """
-    jobs = []
-    for rr, n_val in zip(res, n_arr):
-        epsilon_pos = rr.get('epsilon_pos')
-        epsilon_neg = rr.get('epsilon_neg')
-        for mc_iter, theta_row in enumerate(rr['theta_arr']):
-            jobs.append((n_val, mc_iter, theta_row, epsilon_pos, epsilon_neg))
-
-    results = Parallel(n_jobs=n_jobs)(
-        delayed(_eval_one_theta)(n_val, mc_iter, theta_row, epsilon_pos, epsilon_neg, data_val, ci)
-        for n_val, mc_iter, theta_row, epsilon_pos, epsilon_neg in tqdm(jobs, desc="Evaluating metrics for given values of theta")
-    )
-
-    df = pd.concat(results, ignore_index=True)
-    df['setting'] = setting
-    df['value'] = pd.to_numeric(df['value'])
-
-    return df
-
 
 
 def coverage(metrics_est, metrics_true, simplify=True):
