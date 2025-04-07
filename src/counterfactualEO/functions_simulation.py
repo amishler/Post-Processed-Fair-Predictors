@@ -28,7 +28,7 @@ from sklearn.metrics import confusion_matrix, classification_report
 from .functions_estimation import (
     optimize, risk_coefs, fairness_coefs
 )
-from .functions_evaluation import metrics
+from .functions_evaluation import metrics_post
 
 
 def generate_data_pre(n, prob_A, beta_X, beta_D, beta_Y0, beta_Y1,
@@ -483,7 +483,7 @@ def simulate_true(n, data_params, epsilon_pos, epsilon_neg):
 
     # Evaluate best derived predictor on a new, independent dataset
     data_val = generate_data_post(n, **data_params)
-    evals = metrics(theta, data_val, A='A', R='R', outcome='Y0')
+    evals = metrics_post(theta, data_val, A='A', R='R', outcome='Y0')
 
     return {
         'theta': theta,
@@ -572,7 +572,7 @@ def simulate_task2(theta, noise_coef, n_arr, mc_reps, data_params,
         if verbose and (i % 10 == 0):
             print(f"[n={n}] Simulating run {i}")
         data_val = generate_data_post_noisy(n, noise_coef, **data_params)
-        result = metrics(theta, data_val, outcome=outcome, ci=ci, ci_scale=ci_scale)
+        result = metrics_post(theta, data_val, outcome=outcome, ci=ci, ci_scale=ci_scale)
         result.insert(0, 'mc_iter', i)
         result.insert(0, 'n', n)
         return result
@@ -666,7 +666,7 @@ def simulate_performance_tradeoff(
     # Step 3: Define function for computing metrics for one (ε_pos, ε_neg)
     def evaluate_combo(eps_pos, eps_neg):
         theta = optimize(coefs_obj, coefs_pos, coefs_neg, eps_pos, eps_neg)
-        df = metrics(theta, data_val, outcome='mu0', ci=None)
+        df = metrics_post(theta, data_val, outcome='mu0', ci=None)
         df['epsilon_pos'] = eps_pos
         df['epsilon_neg'] = eps_neg
         return df

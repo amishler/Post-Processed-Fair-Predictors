@@ -89,7 +89,7 @@ def ci_prob_diff(est, sd, z, n, scale='logit'):
     return lower, upper
 
 
-def est_risk(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
+def est_risk_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
              ci_scale='logit'):
     """Estimate overall risk and the change in risk due to post-processing.
 
@@ -98,7 +98,8 @@ def est_risk(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
             predictor.
         data (pd.DataFrame): Evaluation data.
         A, R (str): Column names for sensitive attribute and risk score.
-        outcome (str): Column with pseudo-outcome (phihat, muhat0, or mu0).
+        outcome (str): Column with true outcome Y0 or pseudo-outcome (phihat, 
+            muhat0, or mu0).
         ci (float): Confidence level (e.g. 0.95), or None for no CI.
         ci_scale (str): CI transformation scale ('logit' or 'expit').
 
@@ -133,10 +134,47 @@ def est_risk(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
     return pd.DataFrame(out)
 
 
-def est_cFPR_group(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
+def est_predictive_change(theta, data, A='A', R='R', ci=0.95):
+    """
+    Estimate the predictive change due to post-processing, defined as the 
+    probability that the derived predictions differ from the original 
+    predictions.
+
+    Args:
+        theta (np.ndarray): 4-element vector indexing the post-processed
+            predictor.
+        data (pd.DataFrame): Evaluation data.
+        A, R, outcome (str): Column names for the sensitive feature and the
+            input predictor.
+        ci (float): Confidence level, or None in which case no CI will be
+            computed.
+    
+    Returns:
+        pd.DataFrame: A single row DataFrame with the metric 'prop_differ', its 
+            point estimate, and optional confidence intervals.
+    """
+    ind_df = indicator_df(data, A, R).astype(int)
+    newvar = ind_df.dot([theta[0], 1 - theta[1], theta[2], 1 - theta[3]])
+    diff_est = newvar.mean()       
+    out = pd.DataFrame({'metric': 'prop_differ', 'value': diff_est, 
+                       'ci_lower': None, 'ci_upper': None}, index = [0])
+    if ci:    
+        n = data.shape[0]
+        z = scipy.stats.norm.ppf((ci + 1) / 2)
+        diff_sd = np.std(newvar)
+        ci_lower = diff_est - z*diff_sd/np.sqrt(n)
+        ci_upper = diff_est + z*diff_sd/np.sqrt(n)
+        out['ci_lower'] = np.max([ci_lower, 0])
+        out['ci_upper'] = np.min([ci_upper, 1])
+    
+    return out
+
+
+def est_cFPR_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
              ci_scale='logit'):
     """
-    Estimate counterfactual FPRs for groups A=0 and A=1, and their gap.
+    Estimate counterfactual FPRs and their gap for the post-processed aka
+    derived predictor.
 
     Args:
         theta (np.ndarray): 4-element vector indexing the post-processed
@@ -150,7 +188,7 @@ def est_cFPR_group(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
         pd.DataFrame: FPR0, FPR1, and gap_FPR with optional CIs.
     """
     # Get the two vectors of influence function values for the estimators.
-    # Compute all three estimates.
+    # Compute all three estimates, for FPR0, FPR1, and their gap.
     # If CI, get the variance vectors for both groups. Compute all 3 variances.
     coefs_pos, _ = fairness_coefs(data, A, R, outcome)
     est0 = coefs_pos[:2] @ theta[:2]
@@ -185,10 +223,12 @@ def est_cFPR_group(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
     return pd.DataFrame(out)
 
 
-def est_cFNR_group(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
+def est_cFNR_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
              ci_scale='logit'):
     """
-    Estimate counterfactual FNRs for groups A=0 and A=1, and their gap.
+    Estimate counterfactual FNRs and their gap for the post-processed aka
+    derived predictor.
+
 
     Args:
         theta (np.ndarray): 4-element vector indexing the post-processed
@@ -237,25 +277,27 @@ def est_cFNR_group(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
     return pd.DataFrame(out)
 
 
-def metrics(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci_scale='logit'):
+def metrics_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci_scale='logit'):
     """
-    Compute risk, FPR, and FNR metrics for a given predictor.
+    Compute risk, FPR, and FNR metrics for a given post-processed aka derived
+    predictor.
 
     Args:
         theta (np.ndarray): 4-element vector indexing the post-processed
             predictor.
         data (pd.DataFrame): Evaluation dataset.
         A, R (str): Sensitive attribute and risk score column names.
-        outcome (str): Column with estimated or true outcome.
+        outcome (str): Column with estimated or true outcome. Could be 'Y0', 
+          'phihat', 'muhat0', or 'mu0' for example.
         ci (float): Confidence level for intervals.
         ci_scale (str): CI transformation scale.
 
     Returns:
         pd.DataFrame: Combined metric estimates and confidence intervals.
     """
-    risk = est_risk(theta, data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
-    cFPR = est_cFPR_group(theta, data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
-    cFNR = est_cFNR_group(theta, data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
+    risk = est_risk_post(theta, data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
+    cFPR = est_cFPR_post(theta, data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
+    cFNR = est_cFNR_post(theta, data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
     out = pd.concat([risk, cFPR, cFNR])
 
     return out
@@ -265,7 +307,7 @@ def _eval_one_theta(n_val, mc_iter, theta_row, epsilon_pos, epsilon_neg, data_va
     """
     Evaluate a single theta and return its metrics as a DataFrame row.
     """
-    df = metrics(theta_row, data_val, A='A', R='R', outcome='mu0', ci=ci)
+    df = metrics_post(theta_row, data_val, A='A', R='R', outcome='mu0', ci=ci)
     df.insert(0, 'mc_iter', mc_iter)
     df.insert(0, 'n', n_val)
     df.insert(0, 'epsilon_neg', epsilon_neg)
