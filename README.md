@@ -57,6 +57,15 @@ from counterfactualEO.functions_evaluation import metrics_post_crossfit
 
 See the jupyter notebooks for example usage.
 
+## Notes on Output Directories
+
+The repository includes `outputs/` and `figures/` directories to store generated results and visualizations from running the notebooks. These directories are included (with a `.gitkeep` file) to ensure code that writes to them works out-of-the-box.
+
+If you're running simulations or generating plots, outputs will be saved to:
+
+- `outputs/`: intermediate and final simulation results (e.g., CSVs, pickles)
+- `figures/`: plots and visualizations used for analysis or paper figures
+
 ## Citation
 
 If you use this code in your work, please cite:
