@@ -104,9 +104,14 @@ def ci_prob_diff(est, sd, z, n, scale='logit'):
     return lower, upper
 
 
-def est_risk_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
-             ci_scale='logit'):
+def est_risk_post(theta, data, A='A', R='R', outcome='phihat', cost_fpr=1,
+                  cost_fnr=1, ci=0.95, ci_scale='logit'):
     """Estimate overall risk and the change in risk due to post-processing.
+
+    This risk is the weighted misclassification error, with optionally
+    different weights for false positive and false negative errors. The scale of 
+    the weights is arbitrary, but the ratio between them is important.  The 
+    default is to assign equal weight to both types of error.
 
     Args:
         theta (np.ndarray): 4-element vector indexing the post-processed
@@ -115,6 +120,8 @@ def est_risk_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
         A, R (str): Column names for sensitive attribute and risk score.
         outcome (str): Column with true outcome Y0 or pseudo-outcome (phihat, 
             muhat0, or mu0).
+        cost_fpr: Weight for false positive errors (default: 1).
+        cost_fnr: Weight for false negative errors (default: 1).
         ci (float): Confidence level (e.g. 0.95), or None for no CI.
         ci_scale (str): CI transformation scale ('logit' or 'expit').
 
@@ -124,9 +131,9 @@ def est_risk_post(theta, data, A='A', R='R', outcome='phihat', ci=0.95,
     ind_df = indicator_df(data, A, R)
 
     ## Risk and risk change point estimates, using influence function
-    inf_risk_pre = ind_df.dot([0, 1, 0, 1]) * (1 - 2 * data[outcome]) + data[
-        outcome]
-    inf_risk_post = ind_df.dot(theta) * (1 - 2 * data[outcome]) + data[outcome]
+    inf_risk_pre = ind_df.dot([0, 1, 0, 1]) * (cost_fpr - (cost_fpr + cost_fnr) * data[outcome]) + data[outcome]
+    inf_risk_post = ind_df.dot(theta) * (cost_fpr - (cost_fpr + cost_fnr) * data[outcome]) + data[outcome]
+
     inf_change = inf_risk_post - inf_risk_pre
 
     risk_est = min(max(0, inf_risk_post.mean()), 1)
@@ -291,7 +298,8 @@ def est_predictive_change(theta, data, A='A', R='R', ci=0.95, ci_scale='logit'):
     return out
 
 
-def metrics_post_simple(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci_scale='logit'):
+def metrics_post_simple(theta, data, A='A', R='R', outcome='phihat', 
+                        cost_fpr=1, cost_fnr=1, ci=0.95, ci_scale='logit'):
     """
     Estimate risk, FPR, and FNR metrics for a given post-processed aka derived
     predictor. This function is "simple" in the sense that it assumes that
@@ -301,6 +309,11 @@ def metrics_post_simple(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci
     Or if the outcomes are available because they have been simulated rather than estimated.
     For use on actual data, users should instead use `metrics_post_crossfit` to 
     ensure proper cross-fitting of nuisance models.
+
+    The estimated risk is the weighted misclassification error, with optionally
+    different weights given to false positives vs. false negatives. The scale of
+    the weights is arbitrary, but the ratio between them is important. The
+    default is to assign equal weight to both types of error.
 
     Args:
         theta (np.ndarray): 4-element vector indexing the post-processed
@@ -312,13 +325,16 @@ def metrics_post_simple(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci
             that's known), phihat (the doubly robust pseudo-outcomes, for
             doubly robust metrics estimation), or muhat0 (the estimated
             regression outcome, for a plugin estimator).
+        cost_fpr: Weight for false positive errors (default: 1).
+        cost_fnr: Weight for false negative errors (default: 1).
         ci (float): Confidence level for intervals.
         ci_scale (str): CI transformation scale.
 
     Returns:
         pd.DataFrame: Combined metric estimates and confidence intervals.
     """
-    risk = est_risk_post(theta, data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
+    risk = est_risk_post(theta, data, A=A, R=R, outcome=outcome, 
+                         cost_fpr=cost_fpr, cost_fnr=cost_fnr, ci=ci, ci_scale=ci_scale)
     cFPR = est_cFPR_post(theta, data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
     cFNR = est_cFNR_post(theta, data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
     predictive_change = est_predictive_change(theta, data, A=A, R=R, ci=ci, ci_scale=ci_scale)
@@ -328,11 +344,16 @@ def metrics_post_simple(theta, data, A='A', R='R', outcome='phihat', ci=0.95, ci
 
 
 def metrics_post_crossfit(theta, data, A, X, R, D, Y, learner_pi, learner_mu,
-                          outcome='phihat', ci=0.95, ci_scale='logit',
-                          n_splits=2, trunc_pi=0.975, random_state=None):
+                          outcome='phihat', ci=0.95, cost_fpr=1, cost_fnr=1,
+                          ci_scale='logit', n_splits=2, trunc_pi=0.975, random_state=None):
     """
     Cross-fitted estimation of fairness metrics for a post-processed aka derived
     predictor.
+
+    The estimated risk is the weighted misclassification error, with optionally
+    different weights given to false positives vs. false negatives. The scale of
+    the weights is arbitrary, but the ratio between them is important. The
+    default is to assign equal weight to both types of error.
 
     Args:
         theta (np.ndarray): 4-element vector for post-processed predictor.
@@ -342,6 +363,8 @@ def metrics_post_crossfit(theta, data, A, X, R, D, Y, learner_pi, learner_mu,
         learner_pi, learner_mu: Models for propensity and outcome.
         outcome (str): Name of pseudo-outcome column to compute metrics on 
             (e.g., 'phihat', 'muhat0', 'mu0').
+        cost_fpr: Weight for false positive errors (default: 1).
+        cost_fnr: Weight for false negative errors (default: 1).
         ci (float): Confidence level for intervals.
         ci_scale (str): CI transformation scale.
         n_splits (int): Number of cross-fitting folds.
@@ -367,7 +390,8 @@ def metrics_post_crossfit(theta, data, A, X, R, D, Y, learner_pi, learner_mu,
 
     pooled_data = pd.concat(pooled_parts, axis=0).reset_index(drop=True)
 
-    risk = est_risk_post(theta, pooled_data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
+    risk = est_risk_post(theta, pooled_data, A=A, R=R, outcome=outcome, 
+                         cost_fpr=cost_fpr, cost_fnr=cost_fnr, ci=ci, ci_scale=ci_scale)
     cFPR = est_cFPR_post(theta, pooled_data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
     cFNR = est_cFNR_post(theta, pooled_data, A=A, R=R, outcome=outcome, ci=ci, ci_scale=ci_scale)
     predictive_change = est_predictive_change(theta, pooled_data, A=A, R=R, ci=ci, ci_scale=ci_scale)
